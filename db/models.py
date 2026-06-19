@@ -46,6 +46,7 @@ class Character(Base):
     portrait_path = Column(String(500), default="", comment="头像路径")
     full_body_path = Column(String(500), default="", comment="全身照路径")
     controlnet_ref_path = Column(String(500), default="", comment="ControlNet参考图路径")
+    is_asset_library = Column(Integer, default=0, comment="是否已入库资产: 0=待生成, 1=已入库")
     created_at = Column(DateTime, default=datetime.utcnow)
 
 

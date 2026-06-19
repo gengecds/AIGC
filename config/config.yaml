@@ -1,21 +1,18 @@
 engine:
-  image_provider: "tongyi"     # 开发: tongyi | 生产: comfyui
-  video_provider: "comfyui"    # 视频生成
-  llm_provider: "deepseek"     # 剧本/分镜
+  image_provider: "mock"        # 开发: mock | 生产: comfyui
+  video_provider: "mock"        # 开发: mock | 生产: comfyui
+  llm_provider: "deepseek"     # 开发/生产: deepseek
 
 comfyui:
   host: "127.0.0.1"
   port: 8188
   timeout: 600
+  docker_image: ""              # ComfyUI Docker镜像地址（阿里云容器仓库）
 
 deepseek:
   api_key: ""                  # 从环境变量读取 DEEPSEEK_API_KEY
   model: "deepseek-chat"
   base_url: "https://api.deepseek.com"
-
-tongyi:
-  api_key: ""                  # 从环境变量读取 TONGYI_API_KEY
-  model: "wanx-v1"
 
 ollama:
   host: "127.0.0.1"
