@@ -66,7 +66,11 @@ async def health():
     return {"status": "ok"}
 
 
-# ── 导入路由（后续扩展） ─────────────
+# ── 导入路由 ─────────────────────────
+
+from api.routes.pipeline import router as pipeline_router
+app.include_router(pipeline_router)
+
 
 if __name__ == "__main__":
     import uvicorn

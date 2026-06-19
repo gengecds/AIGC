@@ -6,7 +6,7 @@ from datetime import datetime
 from typing import Dict, List, Optional
 from pathlib import Path
 
-from agents.base import BaseAgent, AgentResult
+from agents.base import Agent, AgentResult
 
 logger = logging.getLogger(__name__)
 
@@ -45,11 +45,10 @@ class PipelineState:
         self.results = {}
 
     def get_last_completed_agent(self, agent_names: List[str]) -> Optional[str]:
-        """从断点恢复：返回最后一个已完成的 agent 名称"""
+        """从断点恢复"""
         completed = [n for n in agent_names if self.is_completed(n)]
         if not completed:
             return None
-        # 按顺序取最后一个
         for name in agent_names:
             if name == completed[-1]:
                 return name
@@ -59,8 +58,7 @@ class PipelineState:
 class Pipeline:
     """管线调度器 - 串联执行 Agent 列表"""
 
-    def __init__(self, agents: List[BaseAgent], state: Optional[PipelineState] = None):
-        self.agents = agents
+    def __init__(self, state: Optional[PipelineState] = None):
         self.state = state or PipelineState()
         self.pipeline_id = datetime.utcnow().strftime("%Y%m%d_%H%M%S")
 
@@ -68,50 +66,74 @@ class Pipeline:
     def agent_names(self) -> List[str]:
         return [a.name for a in self.agents]
 
-    async def run(self, input_data: Dict, resume: bool = False) -> Dict[str, dict]:
+    async def run(self, agents: List[Agent], user_input: str,
+                  resume: bool = False) -> Dict:
         """
         执行整条管线
-        - resume=False: 从头开始
-        - resume=True: 从断点继续
+        agents: 按顺序传入 Agent 实例列表
+        resume: 是否从断点恢复
         """
+        self.agents = agents
         results = {}
 
         if resume:
             last_agent = self.state.get_last_completed_agent(self.agent_names)
             if last_agent:
-                # 加载已有结果到 results
                 for name in self.agent_names:
                     cp = self.state.load_checkpoint(name)
                     if cp:
                         results[name] = cp
                 logger.info(f"[Pipeline] 从断点恢复: {last_agent} 之后继续")
-                # 从最后一个已完成的 agent 之后开始
                 start_idx = self.agent_names.index(last_agent) + 1
                 if start_idx >= len(self.agent_names):
-                    logger.info("[Pipeline] 所有 Agent 已完成")
-                    return results
-                agents_to_run = self.agents[start_idx:]
+                    return {"success": True, "pipeline_id": self.pipeline_id, "results": results}
+                agents_to_run = agents[start_idx:]
             else:
-                agents_to_run = self.agents
+                agents_to_run = agents
         else:
             self.state.clear()
-            agents_to_run = self.agents
+            agents_to_run = agents
 
         for agent in agents_to_run:
             logger.info(f"[Pipeline] 开始执行: {agent.name}")
 
-            # 把前面已生成的结果传递给当前 agent
-            agent_input = {
-                "pipeline_id": self.pipeline_id,
-                "input": input_data,
-                "previous_results": results,
-            }
+            # 根据 agent 类型传递不同的输入
+            result = None
 
-            result = await agent.run_with_retry(agent_input)
+            if agent.name == "script_agent":
+                result = await agent.run(user_input)
+            elif agent.name == "storyboard_agent":
+                script_result = results.get("script_agent", {}).get("data", {})
+                result = await agent.run(script_result)
+            elif agent.name == "character_agent":
+                script_result = results.get("script_agent", {}).get("data", {})
+                result = await agent.run(script_result)
+            elif agent.name == "image_agent":
+                storyboard_result = results.get("storyboard_agent", {}).get("data", {})
+                char_assets = {
+                    c["name"]: c.get("asset", {})
+                    for c in (results.get("character_agent", {}).get("data", {}).get("characters", []) or [])
+                }
+                result = await agent.run(storyboard_result, char_assets)
+            elif agent.name == "video_agent":
+                images_result_data = results.get("image_agent", {})
+                result = await agent.run(AgentResult(success=True, data=images_result_data.get("data", {})))
+            elif agent.name == "subtitle_agent":
+                script_result = results.get("script_agent", {}).get("data", {})
+                storyboard_result = results.get("storyboard_agent", {}).get("data", {})
+                result = await agent.run(script_result, storyboard_result)
+            elif agent.name == "compose_agent":
+                videos_result_data = results.get("video_agent", {})
+                subtitle_result_data = results.get("subtitle_agent", {})
+                result = await agent.run(
+                    AgentResult(success=True, data=videos_result_data.get("data", {})),
+                    AgentResult(success=True, data=subtitle_result_data.get("data", {})),
+                )
 
-            if not result.success:
-                logger.error(f"[Pipeline] {agent.name} 执行失败: {result.error}")
-                results[agent.name] = result.to_dict()
+            if result is None or not result.success:
+                error = result.error if result else "Agent 未返回结果"
+                logger.error(f"[Pipeline] {agent.name} 执行失败: {error}")
+                results[agent.name] = result.to_dict() if result else {"error": error}
                 return {
                     "success": False,
                     "failed_at": agent.name,
