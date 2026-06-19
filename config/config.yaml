@@ -1,0 +1,55 @@
+engine:
+  image_provider: "tongyi"     # 开发: tongyi | 生产: comfyui
+  video_provider: "comfyui"    # 视频生成
+  llm_provider: "deepseek"     # 剧本/分镜
+
+comfyui:
+  host: "127.0.0.1"
+  port: 8188
+  timeout: 600
+
+deepseek:
+  api_key: ""                  # 从环境变量读取 DEEPSEEK_API_KEY
+  model: "deepseek-chat"
+  base_url: "https://api.deepseek.com"
+
+tongyi:
+  api_key: ""                  # 从环境变量读取 TONGYI_API_KEY
+  model: "wanx-v1"
+
+ollama:
+  host: "127.0.0.1"
+  port: 11434
+  model: "qwen3:14b-q8_0"
+
+database:
+  url: "sqlite:///storage/ai_drama.db"
+
+storage:
+  output_dir: "storage/output"
+  checkpoint_dir: "storage/checkpoints"
+
+server:
+  host: "0.0.0.0"
+  port: 8000
+
+# 风格配置文件
+# 切换风格时自动切换模型+workflow+参数组
+style_profiles:
+  realistic:
+    sd_model: "realisticVision-v51"
+    sd_workflow: "sd_shot_realistic.json"
+    video_workflow: "img2video_realistic.json"
+  anime:
+    sd_model: "anything-v5"
+    sd_workflow: "sd_shot_anime.json"
+    video_workflow: "img2video_anime.json"
+  ink_wash:
+    sd_model: "base_model + 水墨LoRA"
+    sd_workflow: "sd_shot_ink.json"
+    video_workflow: "img2video_ink.json"
+
+# 人工干预节点
+human_review:
+  storyboard: true    # 分镜确认后进入出图
+  character: true     # 角色定妆照确认后使用ControlNet
