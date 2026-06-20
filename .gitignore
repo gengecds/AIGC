@@ -1,0 +1,28 @@
+# ── API Key ──
+.env
+
+# ── Python 缓存 ──
+__pycache__/
+*.pyc
+*.pyo
+*.egg-info/
+dist/
+build/
+
+# ── 模型文件（太大不入git） ──
+storage/models/
+storage/output/
+storage/checkpoints/
+storage/workflows/
+storage/outputs/
+storage/ai_drama.db
+
+# ── macOS ──
+.DS_Store
+*.swp
+*.swo
+
+# ── IDE ──
+.idea/
+.vscode/
+*.iml

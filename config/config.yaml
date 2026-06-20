@@ -46,6 +46,14 @@ style_profiles:
     sd_workflow: "sd_shot_ink.json"
     video_workflow: "img2video_ink.json"
 
+# HunyuanVideo 模型路径
+hunyuanvideo:
+  unet_model: "HunyuanVideo/hunyuan_video_720_cfgdistill_fp8_e4m3fn.safetensors"
+  use_fp8: true
+  default_fps: 24
+  max_frames: 129  # 约5.4秒
+  attn_mode: "flash_attn_varlen"
+
 # 人工干预节点
 human_review:
   storyboard: true    # 分镜确认后进入出图

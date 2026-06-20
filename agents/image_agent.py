@@ -14,14 +14,18 @@ logger = logging.getLogger(__name__)
 
 
 class ImageGenAgent(Agent):
-    """Agent 4：批量出图"""
+    """Agent 4：批量出图（ComfyUI + SD）"""
 
     name = "image_agent"
 
-    def __init__(self):
+    def __init__(self, use_comfyui: bool = False):
         super().__init__(name="image_agent")
-        # Phase 2: 替换为 ComfySDImageProvider
-        self.image_provider = MockImageProvider()
+        if use_comfyui:
+            from providers.comfyui_provider import ComfySDImageProvider
+            self.image_provider = ComfySDImageProvider()
+        else:
+            from providers.mock_provider import MockImageProvider
+            self.image_provider = MockImageProvider()
 
     async def run(self, storyboard: dict,
                   character_assets: dict | None = None) -> AgentResult:

@@ -12,7 +12,19 @@ from providers.llm import DeepSeekProvider, OllamaProvider
 
 logger = logging.getLogger(__name__)
 
-VALID_SHOT_TYPES = {"远", "中", "近", "特写", "俯拍", "仰拍", "航拍", "跟随"}
+VALID_SHOT_TYPES = {"远", "中", "近", "特写", "俯拍", "仰拍", "航拍", "跟随", "全景", "远景", "中景", "近景", "广角", "大特写"}
+
+# 景别标准化映射
+SHOT_TYPE_MAP = {
+    "全景": "远", "远景": "远", "广角": "远", "大远景": "远",
+    "中景": "中", "中近景": "中",
+    "近景": "近",
+    "特写": "特写", "大特写": "特写", "局部特写": "特写",
+    "俯视": "俯拍", "俯瞰": "俯拍",
+    "仰视": "仰拍", "低角度": "仰拍",
+    "航拍": "航拍", "空中": "航拍",
+    "跟拍": "跟随", "移动": "跟随", "跟随": "跟随",
+}
 
 STORYBOARD_SYSTEM_PROMPT = """你是一个专业的AI漫剧分镜师。请根据剧本生成详细的分镜表。
 
@@ -52,55 +64,59 @@ class ShotValidator:
 
     MAX_RETRIES = 3
 
-    def validate(self, shots: list[dict]) -> list[dict]:
-        """校验所有分镜，返回 errors 列表"""
-        errors = []
-        for i, shot in enumerate(shots):
-            shot_id = shot.get("shot_id", i + 1)
-            # shot_type
+    def normalize_shots(self, shots: list[dict]) -> list[dict]:
+        """标准化所有分镜，修正 shot_type 等"""
+        for shot in shots:
             st = shot.get("shot_type", "")
-            if st not in VALID_SHOT_TYPES:
-                errors.append({
-                    "shot_id": shot_id,
-                    "field": "shot_type",
-                    "message": f"无效镜头类型: {st}，允许: {sorted(VALID_SHOT_TYPES)}",
-                })
-            # duration
+            if st in SHOT_TYPE_MAP:
+                shot["shot_type"] = SHOT_TYPE_MAP[st]
+            elif st not in VALID_SHOT_TYPES:
+                shot["shot_type"] = "中"  # 默认回退
+            # 确保 duration 合法
             dur = shot.get("duration", 0)
             if not isinstance(dur, (int, float)) or dur < 3 or dur > 12:
-                errors.append({
-                    "shot_id": shot_id,
-                    "field": "duration",
-                    "message": f"无效时长: {dur}s，需在3-12秒范围内",
-                })
-            # sd_prompt
+                shot["duration"] = 5
+            # 确保 sd_prompt 存在
             prompt = shot.get("sd_prompt", "")
             if not prompt or len(prompt) < 20:
-                errors.append({
+                prompt = shot.get("action", "") or shot.get("scene", "")
+                shot["sd_prompt"] = prompt + ", masterpiece, best quality"
+            # 补画质词
+            if "masterpiece" not in prompt.lower() or "best quality" not in prompt.lower():
+                shot["sd_prompt"] = prompt + ", masterpiece, best quality"
+        return shots
+    
+    def validate(self, shots: list[dict]) -> list[dict]:
+        """校验所有分镜，返回 warnings 列表（不再阻塞）"""
+        warnings = []
+        for i, shot in enumerate(shots):
+            shot_id = shot.get("shot_id", i + 1)
+            st = shot.get("shot_type", "")
+            if st not in VALID_SHOT_TYPES:
+                warnings.append({
                     "shot_id": shot_id,
-                    "field": "sd_prompt",
-                    "message": "sd_prompt 为空或过短 (<20字符)",
+                    "field": "shot_type",
+                    "message": f"无效镜头类型: {st}，已自动修正",
                 })
-            required_words = ["masterpiece", "best quality"]
-            if not all(w in prompt.lower() for w in required_words):
-                errors.append({
+            dur = shot.get("duration", 0)
+            if not isinstance(dur, (int, float)) or dur < 3 or dur > 12:
+                warnings.append({
                     "shot_id": shot_id,
-                    "field": "sd_prompt",
-                    "message": f"sd_prompt 缺少画质关键词: {required_words}",
-                    "severity": "warning",
+                    "field": "duration",
+                    "message": f"无效时长: {dur}s，已自动修正",
                 })
-        return errors
+        return warnings
 
     def fix_prompt(self, shot: dict) -> dict:
         """自动补全缺少的prompt元素（如有需要）"""
         prompt = shot.get("sd_prompt", "")
         needed = {
-            "主体": shot.get("characters", []) or shot.get("action", ""),
+            "主体": shot.get("action", ""),
             "场景": shot.get("background", ""),
             "光影": shot.get("lighting", ""),
         }
         for key, val in needed.items():
-            if val and val not in prompt:
+            if isinstance(val, str) and val and val not in prompt:
                 prompt += f", {val}"
         shot["sd_prompt"] = prompt
         return shot
@@ -131,7 +147,6 @@ class StoryboardAgent(Agent):
             )
 
         all_episodes = []
-        retry_count = 0
 
         for ep in script.get("episodes", []):
             ep_input = json.dumps(ep, ensure_ascii=False, indent=2)
@@ -147,51 +162,35 @@ class StoryboardAgent(Agent):
                 f"请为本集生成分镜，要求合法的JSON数组。"
             )
 
-            shots = None
-            while retry_count < self.validator.MAX_RETRIES:
-                try:
-                    raw = await self.llm.generate(
-                        system=STORYBOARD_SYSTEM_PROMPT,
-                        user=prompt,
-                        model="deepseek-chat",
-                    )
+            raw = await self.llm.generate(
+                system=STORYBOARD_SYSTEM_PROMPT,
+                user=prompt,
+                model="deepseek-chat",
+            )
 
-                    raw = raw.strip()
-                    if raw.startswith("```"):
-                        raw = raw.split("\n", 1)[1]
-                        raw = raw.rsplit("```", 1)[0]
+            raw = raw.strip()
+            if raw.startswith("```"):
+                raw = raw.split("\n", 1)[1]
+                raw = raw.rsplit("```", 1)[0]
 
-                    shots = json.loads(raw)
-
-                    # 校验
-                    errors = self.validator.validate(shots)
-                    fatal = [e for e in errors if e.get("severity") != "warning"]
-                    if fatal:
-                        logger.warning(
-                            f"[校验] 分镜校验失败: {len(fatal)}处错误"
-                        )
-                        prompt += (
-                            f"\n\n⚠️ 上次输出校验失败，错误：{json.dumps(fatal, ensure_ascii=False)}"
-                            f"\n请修正后重新生成。"
-                        )
-                        retry_count += 1
-                        continue
-
-                    # 自动补全
-                    for shot in shots:
-                        self.validator.fix_prompt(shot)
-
-                    break
-
-                except json.JSONDecodeError as e:
-                    logger.warning(f"[Storyboard] JSON解析失败: {e}")
-                    retry_count += 1
-
-            if shots is None:
+            try:
+                shots = json.loads(raw)
+            except json.JSONDecodeError as e:
+                logger.error(f"[Storyboard] JSON解析失败: {e}")
                 return AgentResult(
                     success=False,
-                    error=f"分镜生成失败（重试{self.validator.MAX_RETRIES}次后仍失败）",
+                    error=f"LLM返回格式错误: {str(e)}",
                 )
+
+            # 标准化（修正shot_type等），不再硬校验阻止
+            self.validator.normalize_shots(shots)
+            warnings = self.validator.validate(shots)
+            if warnings:
+                logger.warning(f"[校验] 分镜有{warnings}处需修正，已自动处理")
+
+            # 自动补全prompt
+            for shot in shots:
+                self.validator.fix_prompt(shot)
 
             all_episodes.append({
                 "episode_number": ep.get("episode_number", 1),

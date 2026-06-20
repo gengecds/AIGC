@@ -33,6 +33,7 @@ class DeepSeekProvider:
             "temperature": 0.7,
         }
 
+        print(f"[DeepSeek] 调用中... model={model}, prompt_len={len(user)}")
         async with httpx.AsyncClient(timeout=120) as client:
             resp = await client.post(
                 f"{self.base_url}/chat/completions",
@@ -42,6 +43,7 @@ class DeepSeekProvider:
             resp.raise_for_status()
             data = resp.json()
             content = data["choices"][0]["message"]["content"]
+            print(f"[DeepSeek] 响应完成: {len(content)} chars")
             logger.info(f"[DeepSeek] 生成长度: {len(content)} chars")
             return content
 

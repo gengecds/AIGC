@@ -1,7 +1,7 @@
-"""Agent 5 - 图生视频（骨架，Phase 2 实现）
+"""Agent 5 - 图生视频（Phase 2: ComfyUI+HunyuanVideo）
 
 传入图片列表 → ComfyUI+HunyuanVideo 批量图生视频 → 输出视频分段
-开发阶段使用 MockVideoProvider 占位
+开发阶段使用 MockVideoProvider 占位，生产切换 ComfyHunyuanVideoProvider
 """
 
 import logging
@@ -14,14 +14,17 @@ logger = logging.getLogger(__name__)
 
 
 class VideoGenAgent(Agent):
-    """Agent 5：批量图生视频"""
+    """Agent 5：批量图生视频（ComfyUI + HunyuanVideo）"""
 
     name = "video_agent"
 
-    def __init__(self):
+    def __init__(self, use_comfyui: bool = False):
         super().__init__(name="video_agent")
-        # Phase 2: 替换为 ComfyHunyuanVideoProvider
-        self.video_provider = MockVideoProvider()
+        if use_comfyui:
+            from providers.comfyui_provider import ComfyHunyuanVideoProvider
+            self.video_provider = ComfyHunyuanVideoProvider()
+        else:
+            self.video_provider = MockVideoProvider()
 
     async def run(self, images_result,
                   storyboard: dict | None = None) -> AgentResult:
