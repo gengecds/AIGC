@@ -418,6 +418,14 @@ result = await pipeline.run(agents, user_input, resume=True)
 | | AutoDL | ✅ LLM 15GB 上传至 /root/autodl-fs/ | 通过软链映射到 ComfyUI |
 | 2026-06-20 | 环境配置 | ✅ Python 3.14 / httpx / FastAPI 可用 | 无需虚拟环境 |
 | | | ⚠️ python-dotenv 依赖未安装 | 直接用 os.environ 设置 key |
+| 2026-06-20 | 完整管线（Mock） | ✅ Agents 1→2→3→4→5→6→7 全跑通 | Mock模式，最后FFmpeg因 Mock mp4 无真实流报错 |
+| | Agent 1 | ✅ 《程序员的猫娘奇遇记》4角色 | 6集生成，保留第1集（20分镜） |
+| | Agent 2 | ✅ 第1集 20个分镜 | 校验器标准化 shot_type |
+| | Agent 3 | ✅ 4个角色定妆照 | Mock生成占位PNG |
+| | Agent 4 出图 | ✅ 20张图 | Mock生成占位PNG |
+| | Agent 5 视频 | ✅ 20段视频 | Mock生成5秒假MP4 |
+| | Agent 6 字幕 | ✅ 1个SRT | 从分镜对话生成时间轴 |
+| | Agent 7 合成 | ⚠️ FFmpeg失败 | 假MP4无真实流，ComfyUI下无此问题 |
 
 ---
 

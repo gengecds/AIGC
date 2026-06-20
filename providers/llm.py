@@ -2,17 +2,37 @@
 
 import logging
 import os
+from pathlib import Path
 
 import httpx
 
 logger = logging.getLogger(__name__)
 
 
+# 自动加载 .env 文件（如果存在）
+def _load_dotenv():
+    env_path = Path(__file__).parent.parent / ".env"
+    if not env_path.exists():
+        return
+    with open(env_path) as f:
+        for line in f:
+            line = line.strip()
+            if not line or line.startswith("#"):
+                continue
+            key, _, val = line.partition("=")
+            key = key.strip()
+            val = val.strip().strip("'\"")
+            if key == "DEEPSEEK_API_KEY":
+                os.environ[key] = val
+                return val
+    return None
+
+
 class DeepSeekProvider:
     """DeepSeek API 封装"""
 
     def __init__(self):
-        self.api_key = os.getenv("DEEPSEEK_API_KEY", "")
+        self.api_key = _load_dotenv() or os.environ.get("DEEPSEEK_API_KEY", "")
         self.base_url = "https://api.deepseek.com"
         if not self.api_key:
             logger.warning("DEEPSEEK_API_KEY 未设置，请写入 .env 文件")

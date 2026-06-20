@@ -45,9 +45,12 @@ class ImageGenAgent(Agent):
                     "sd_prompt": shot.get("sd_prompt", ""),
                     "sd_negative": shot.get("sd_negative", ""),
                     "seed": shot.get("seed", -1),
-                    "ref_image": character_assets.get(
-                        shot.get("characters", [None])[0], {}
-                    ).get("controlnet_ref_path") if character_assets else None,
+                    "ref_image": (
+                        character_assets.get(
+                            shot.get("characters", [None])[0] if isinstance(shot.get("characters"), list) else shot.get("characters", None),
+                            {}
+                        ).get("controlnet_ref_path")
+                    ) if character_assets else None,
                 })
 
             images = await self.image_provider.batch_generate(shot_data)

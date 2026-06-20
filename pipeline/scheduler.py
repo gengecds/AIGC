@@ -66,6 +66,13 @@ class Pipeline:
     def agent_names(self) -> List[str]:
         return [a.name for a in self.agents]
 
+    def _get(self, results: dict, agent_name: str, field: str = "data"):
+        """安全地从 results 字典中取值"""
+        d = results.get(agent_name, {})
+        if isinstance(d, dict):
+            return d.get(field, {})
+        return {}
+
     async def run(self, agents: List[Agent], user_input: str,
                   resume: bool = False) -> Dict:
         """
@@ -97,52 +104,50 @@ class Pipeline:
         for agent in agents_to_run:
             logger.info(f"[Pipeline] 开始执行: {agent.name}")
 
-            # 根据 agent 类型传递不同的输入
-            result = None
+            name = agent.name
+            script_data = self._get(results, "script_agent")
+            storyboard_data = self._get(results, "storyboard_agent")
+            character_data = self._get(results, "character_agent")
+            image_data = self._get(results, "image_agent")
+            video_data = self._get(results, "video_agent")
+            subtitle_data = self._get(results, "subtitle_agent")
 
-            if agent.name == "script_agent":
+            if name == "script_agent":
                 result = await agent.run(user_input)
-            elif agent.name == "storyboard_agent":
-                script_result = results.get("script_agent", {}).get("data", {})
-                result = await agent.run(script_result)
-            elif agent.name == "character_agent":
-                script_result = results.get("script_agent", {}).get("data", {})
-                result = await agent.run(script_result)
-            elif agent.name == "image_agent":
-                storyboard_result = results.get("storyboard_agent", {}).get("data", {})
+            elif name == "storyboard_agent":
+                result = await agent.run(script_data)
+            elif name == "character_agent":
+                result = await agent.run(script_data)
+            elif name == "image_agent":
                 char_assets = {
                     c["name"]: c.get("asset", {})
-                    for c in (results.get("character_agent", {}).get("data", {}).get("characters", []) or [])
+                    for c in character_data.get("characters", []) or []
                 }
-                result = await agent.run(storyboard_result, char_assets)
-            elif agent.name == "video_agent":
-                images_result_data = results.get("image_agent", {})
-                result = await agent.run(AgentResult(success=True, data=images_result_data.get("data", {})))
-            elif agent.name == "subtitle_agent":
-                script_result = results.get("script_agent", {}).get("data", {})
-                storyboard_result = results.get("storyboard_agent", {}).get("data", {})
-                result = await agent.run(script_result, storyboard_result)
-            elif agent.name == "compose_agent":
-                videos_result_data = results.get("video_agent", {})
-                subtitle_result_data = results.get("subtitle_agent", {})
+                result = await agent.run(storyboard_data, char_assets)
+            elif name == "video_agent":
+                result = await agent.run(AgentResult(success=True, data={"images": image_data.get("images", {})}),
+                                          storyboard_data)
+            elif name == "subtitle_agent":
+                result = await agent.run(script_data, storyboard_data)
+            elif name == "compose_agent":
                 result = await agent.run(
-                    AgentResult(success=True, data=videos_result_data.get("data", {})),
-                    AgentResult(success=True, data=subtitle_result_data.get("data", {})),
+                    AgentResult(success=True, data={"videos": video_data.get("videos", {})}),
+                    AgentResult(success=True, data={"subtitles": subtitle_data.get("subtitles", [])}),
                 )
 
             if result is None or not result.success:
                 error = result.error if result else "Agent 未返回结果"
-                logger.error(f"[Pipeline] {agent.name} 执行失败: {error}")
-                results[agent.name] = result.to_dict() if result else {"error": error}
+                logger.error(f"[Pipeline] {name} 执行失败: {error}")
+                results[name] = result.to_dict() if result else {"error": error}
                 return {
                     "success": False,
-                    "failed_at": agent.name,
+                    "failed_at": name,
                     "results": results,
                 }
 
-            results[agent.name] = result.to_dict()
-            self.state.save_checkpoint(agent.name, result)
-            logger.info(f"[Pipeline] {agent.name} 完成")
+            results[name] = result.to_dict()
+            self.state.save_checkpoint(name, result)
+            logger.info(f"[Pipeline] {name} 完成")
 
         return {
             "success": True,
