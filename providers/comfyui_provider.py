@@ -23,7 +23,12 @@ class ComfySDImageProvider(ImageProvider):
     """ComfyUI + SD 图片生成"""
 
     def __init__(self, client: Optional[ComfyUIClient] = None):
-        self.client = client or ComfyUIClient()
+        from config.settings import settings
+        cfg = settings.comfyui
+        self.client = client or ComfyUIClient(
+            server_addr=cfg.server_addr,
+            server_port=cfg.server_port,
+        )
         self._ckpt = "Realistic-Vision-V5.1.safetensors"
 
     async def generate(
@@ -135,7 +140,12 @@ class ComfyHunyuanVideoProvider(VideoProvider):
     WF_PATH = Path(__file__).parent.parent / "workflows" / "img2video_hunyuan_v2.json"
 
     def __init__(self, client: Optional[ComfyUIClient] = None):
-        self.client = client or ComfyUIClient()
+        from config.settings import settings
+        cfg = settings.comfyui
+        self.client = client or ComfyUIClient(
+            server_addr=cfg.server_addr,
+            server_port=cfg.server_port,
+        )
         self._workflow_template = json.loads(self.WF_PATH.read_text())
 
     async def _cp_to_input(self, filename: str):

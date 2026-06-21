@@ -1,60 +1,50 @@
+# AI 漫剧创作平台 — 配置中心
+# 覆盖顺序: 环境变量 > config.yaml > 默认值
+
 engine:
-  image_provider: "comfyui"    # 开发: mock | 生产: comfyui
-  video_provider: "comfyui"    # 开发: mock | 生产: comfyui
-  llm_provider: "deepseek"     # 开发/生产: deepseek
+  # 图片生成引擎: "comfyui" | "mock" | "tongyi"
+  image_provider: "mock"
+  # 视频生成引擎: "comfyui" | "mock"
+  video_provider: "mock"
+  # LLM引擎: "deepseek" | "ollama" | "mock"
+  llm_provider: "mock"
 
 comfyui:
-  host: "127.0.0.1"
-  port: 18188
-  timeout: 600
-  docker_image: ""              # ComfyUI Docker镜像地址（阿里云容器仓库）
+  server_addr: "127.0.0.1"
+  server_port: 18188
+  use_https: false
+  timeout: 300
+  # GPU SSH 配置（ComfyUI 直接时不需要）
+  gpu_host: "root@connect.bjb2.seetacloud.com"
+  gpu_port: 30476
+  gpu_pass: "900917_19871002-Gz"
+  gpu_output_dir: "/root/ComfyUI/output"
 
 deepseek:
-  api_key: ""                  # 从环境变量读取 DEEPSEEK_API_KEY
+  api_key: ""  # 优先环境变量 DEEPSEEK_API_KEY
   model: "deepseek-chat"
-  base_url: "https://api.deepseek.com"
 
 ollama:
-  host: "127.0.0.1"
-  port: 11434
-  model: "qwen3:14b-q8_0"
+  server_url: "http://localhost:11434"
+  model: "qwen3:14b"
 
-database:
-  url: "sqlite:///storage/ai_drama.db"
+tongyi:
+  api_key: ""  # 优先环境变量 TONGYI_API_KEY
+  model: "wanx2.1-t2i-plus"
 
 storage:
-  output_dir: "storage/output"
-  checkpoint_dir: "storage/checkpoints"
+  checkpoint_dir: "storage/checkpoints/"
+  output_dir: "storage/output/"
+  images_dir: "storage/images/"
+  frames_dir: "storage/frames_tmp/"
 
-server:
-  host: "0.0.0.0"
+pipeline:
+  max_retries: 3
+  retry_delay: 2.0  # 秒
+  review_enabled: true
+  default_model: "deepseek-chat"
+
+frontend:
+  host: "127.0.0.1"
   port: 8000
-
-# 风格配置文件
-# 切换风格时自动切换模型+workflow+参数组
-style_profiles:
-  realistic:
-    sd_model: "realisticVision-v51"
-    sd_workflow: "sd_shot_realistic.json"
-    video_workflow: "img2video_realistic.json"
-  anime:
-    sd_model: "anything-v5"
-    sd_workflow: "sd_shot_anime.json"
-    video_workflow: "img2video_anime.json"
-  ink_wash:
-    sd_model: "base_model + 水墨LoRA"
-    sd_workflow: "sd_shot_ink.json"
-    video_workflow: "img2video_ink.json"
-
-# HunyuanVideo 模型路径
-hunyuanvideo:
-  unet_model: "HunyuanVideo/hunyuan_video_720_cfgdistill_fp8_e4m3fn.safetensors"
-  use_fp8: true
-  default_fps: 24
-  max_frames: 129  # 约5.4秒
-  attn_mode: "flash_attn_varlen"
-
-# 人工干预节点
-human_review:
-  storyboard: true    # 分镜确认后进入出图
-  character: true     # 角色定妆照确认后使用ControlNet
+  debug: true

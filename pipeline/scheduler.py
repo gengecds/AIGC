@@ -8,6 +8,7 @@ from typing import Dict, List, Optional, Callable, Awaitable, Any
 from pathlib import Path
 
 from agents.base import Agent, AgentResult
+from pipeline.retry import retry_async
 
 logger = logging.getLogger(__name__)
 
@@ -194,9 +195,9 @@ class Pipeline:
 
             try:
                 if name == "script_agent":
-                    result = await agent.run(user_input)
+                    result = await retry_async(agent.run, user_input)
                 elif name == "storyboard_agent":
-                    result = await agent.run(script_data)
+                    result = await retry_async(agent.run, script_data)
                     # 审核断点 1：分镜完成后等待确认
                     if enable_review and result.success:
                         rd = result.data or {}
@@ -204,7 +205,7 @@ class Pipeline:
                             "storyboard_approval", rd, name
                         )
                 elif name == "character_agent":
-                    result = await agent.run(script_data)
+                    result = await retry_async(agent.run, script_data)
                     # 审核断点 2：角色定妆照确认
                     if enable_review and result.success:
                         rd = result.data or {}
@@ -216,22 +217,21 @@ class Pipeline:
                         c["name"]: c.get("asset", {})
                         for c in character_data.get("characters", []) or []
                     }
-                    result = await agent.run(storyboard_data, char_assets)
+                    result = await retry_async(agent.run, storyboard_data, char_assets)
                 elif name == "video_agent":
-                    result = await agent.run(
+                    result = await retry_async(agent.run,
                         AgentResult(success=True, data={"images": image_data.get("images", {})}),
                         storyboard_data,
                     )
                 elif name == "subtitle_agent":
-                    result = await agent.run(script_data, storyboard_data)
+                    result = await retry_async(agent.run, script_data, storyboard_data)
                 elif name == "video_compose_agent":
-                    result = await agent.run(
+                    result = await retry_async(agent.run,
                         AgentResult(success=True, data={"videos": video_data.get("videos", {})}),
                         AgentResult(success=True, data={"subtitles": subtitle_data.get("subtitles", [])}),
                     )
                 elif name == "compose_agent":
-                    # 兼容旧 compose_agent
-                    result = await agent.run(
+                    result = await retry_async(agent.run,
                         AgentResult(success=True, data={"videos": video_data.get("videos", {})}),
                         AgentResult(success=True, data={"subtitles": subtitle_data.get("subtitles", [])}),
                     )
@@ -239,7 +239,7 @@ class Pipeline:
                     compose_data = self._get(results, "video_compose_agent")
                     if not compose_data:
                         compose_data = self._get(results, "compose_agent")
-                    result = await agent.run(
+                    result = await retry_async(agent.run,
                         AgentResult(success=True, data={"published": compose_data.get("published", [])})
                     )
                 else:
