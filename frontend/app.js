@@ -6,7 +6,7 @@
 (function(){
   'use strict';
 
-  const API = 'http://127.0.0.1:8000';
+  const API = 'http://127.0.0.1:8888';
   const AGENTS = ['script','storyboard','character','image','video','subtitle','compose'];
   const AGENT_LABELS = { script:'剧本', storyboard:'分镜', character:'定妆照', image:'出图', video:'视频', subtitle:'字幕', compose:'合成' };
   const AGENT_ICONS = { script:'📝', storyboard:'📋', character:'🎭', image:'🖼️', video:'🎬', subtitle:'📄', compose:'📦' };
@@ -26,6 +26,9 @@
     els.storyInput = $('#storyInput');
     els.generateBtn = $('#generateBtn');
     els.stopBtn = $('#stopBtn');
+    els.progressText = $('#progressText');
+    els.progressPct = $('#progressPct');
+    els.progressBar = $('#progressBar');
     els.gpBar = $('#globalProgress');
     els.gpFill = $('#gpFill');
     els.gpText = $('#gpText');
@@ -51,28 +54,32 @@
     els.ovEpisodes = $('#ovEpisodes');
     els.ovShots = $('#ovShots');
     els.ovTime = $('#ovTime');
+    els.ovTitle = $('#ovTitle');
     els.ovRemain = $('#ovRemain');
+    els.ovTitle = $('#ovTitle');
+    els.checkpointList = $('#checkpointList');
     els.detailPanel = $('#detailPanel');
     // Tab
-    els.tabBtns = $$('.tab');
-    els.tabContents = [document.getElementById('tab-assets'), document.getElementById('tab-overview')];
+    els.tabBtns = document.querySelectorAll('.sidebar .tab-btn');
+    els.tabContents = [document.getElementById('tab-asset'), document.getElementById('tab-task')];
   }
 
-  function esc(t) { const d=document.createElement('div'); d.textContent=t; return d.innerHTML; }
+  function esc(t) { if(!t) return ''; const d=document.createElement('div'); d.textContent=t; return d.innerHTML; }
   function fmt(t) { const m=Math.floor(t/60); const s=Math.floor(t%60); return `${m}:${s.toString().padStart(2,'0')}`; }
 
   // ═══ Card State Machine ═══
   function setCardState(agent, status, meta) {
-    const card = document.querySelector(`.chain-card[data-agent="${agent}"]`);
+    const card = document.querySelector(`.card[data-agent="${agent}"]`);
     if (!card) return;
     // 状态: idle|queued|running|review|done|failed
-    AGENTS.forEach(a => document.querySelector(`.chain-card[data-agent="${a}"]`).className = 'chain-card');
+    const all = ['idle','queued','running','review','done','failed'];
+    all.forEach(s => card.classList.remove('state-'+s));
     card.classList.add('state-'+status);
     const stEl = document.getElementById('status-'+agent);
     const meEl = document.getElementById('meta-'+agent);
     const statusLabels = { idle:'空闲', queued:'⏳ 排队', running:'⏳ 执行中…', review:'⏸️ 待确认', done:'✅ 完成', failed:'❌ 失败' };
-    stEl.textContent = statusLabels[status] || status;
-    meEl.textContent = meta || '';
+    if (stEl) stEl.textContent = statusLabels[status] || status;
+    if (meEl) meEl.textContent = meta || '';
     state.cards[agent] = { status, meta };
   }
 
@@ -82,13 +89,20 @@
 
   // ═══ Global Progress ═══
   function setProgress(pct, text) {
-    els.gpBar.style.display = '';
-    els.gpFill.style.width = Math.min(100, Math.max(0, pct)) + '%';
-    els.gpText.textContent = text || '';
+    if (els.gpBar) els.gpBar.style.display = '';
+    if (els.gpFill) els.gpFill.style.width = Math.min(100, Math.max(0, pct)) + '%';
+    if (els.gpText) els.gpText.textContent = text || '';
+    // 也更新 progressText
+    if (els.progressText) els.progressText.textContent = text || (pct ? pct+'%' : '空闲');
+    if (els.progressPct) {
+      const agentN = Math.floor(pct / 14.29);
+      els.progressPct.textContent = pct === 100 ? '✅ 全部完成' : `${pct}% (${Math.min(agentN+1,7)}/7 Agent)`;
+    }
   }
 
   // ═══ Log ═══
   function addLog(level, agent, msg) {
+    if (!els.logList) return;
     const entry = document.createElement('div');
     entry.className = 'log-entry ' + level;
     const t = new Date();
@@ -96,9 +110,9 @@
     entry.innerHTML = `<span class="time">${ts}</span>[${AGENT_LABELS[agent]||agent}] ${esc(msg)}`;
     els.logList.prepend(entry);
     state.logCount++;
-    els.logCount.textContent = state.logCount;
+    if (els.logCount) els.logCount.textContent = state.logCount;
     // 自动扩展
-    if (!els.logbar.classList.contains('expanded')) {
+    if (els.logbar && !els.logbar.classList.contains('expanded')) {
       els.logbar.classList.add('expanded');
     }
   }
@@ -163,6 +177,36 @@
     _detailReviewReason = '';
   }
 
+  // 暴露全局函数供 index.html onclick 调用
+  function exposeGlobals() {
+    // 重新绑定 onclick 引用
+    if (!window._app) window._app = { state, els };
+    window.selectCard = (agent) => {
+      // 高亮效果
+      $$('.card').forEach(c => { c.style.borderColor = ''; c.style.boxShadow = ''; });
+      const card = document.querySelector(`.card[data-agent="${agent}"]`);
+      if (card) { card.style.borderColor = 'var(--accent)'; card.style.boxShadow = '0 0 16px rgba(108,92,231,0.2)'; }
+      renderDetail(agent);
+    };
+    window.toggleDrawer = () => {
+      const isOpen = els.historyDrawer.classList.contains('open');
+      if (isOpen) closeHistory(); else openHistory();
+    };
+    window.toggleLog = () => {
+      els.logbar.classList.toggle('expanded');
+    };
+    window.switchTab = (tab) => {
+      els.tabBtns.forEach(b => b.classList.remove('active'));
+      document.querySelectorAll('.sidebar .tab-btn').forEach(b => { if(b.textContent.includes(tab==='asset'?'资产':'任务')) b.classList.add('active'); });
+      const contentAsset = document.getElementById('tab-asset');
+      const contentTask = document.getElementById('tab-task');
+      if (contentAsset) contentAsset.style.display = tab === 'asset' ? 'block' : 'none';
+      if (contentTask) contentTask.style.display = tab === 'task' ? 'block' : 'none';
+    };
+    window.startPipeline = startPipeline;
+    window.stopPipeline = stopPipeline;
+  }
+
   // ═══ Card Click → Detail ═══
   function bindCardClicks() {
     $$('.chain-card').forEach(card => {
@@ -176,8 +220,16 @@
 
   async function renderDetail(agent, reviewReason='') {
     try {
-      const resp = await fetch(API + '/api/v1/pipeline/snapshot/latest', { mode:'cors' });
-      if (!resp.ok) return;
+      const resp = await fetch(API + '/api/v1/pipeline/snapshot/latest', { mode:'cors' }).catch(() => null);
+      if (!resp || !resp.ok) {
+        // 离线模式：显示本地渲染提示
+        els.detailSection.style.display = '';
+        els.detailTitle.textContent = AGENT_LABELS[agent]||agent;
+        els.detailBody.innerHTML = '<div class="placeholder"><div class="icon">🔌</div>后端离线，前端模拟</div>';
+        els.detailActions.style.display = 'none';
+        state.detailAgent = agent;
+        return;
+      }
       const snap = await resp.json();
       let title = AGENT_LABELS[agent] || agent;
       let review = reviewReason;
@@ -303,7 +355,7 @@
 
   // ═══ SSE / Backend Connection ═══
   function connectSSE() {
-    // 用 Server-Sent Events
+    try {
     const es = new EventSource(API + '/api/v1/pipeline/events/stream');
     es.onopen = () => {
       els.serverStatus.className = 'server-status';
@@ -374,10 +426,13 @@
       setProgress(0, '已取消');
     });
     es.onerror = () => {
-      els.serverStatus.className = 'server-status disconnected';
-      els.serverStatus.innerHTML = '<span class="status-dot"></span>断线重连…';
+      if (els.serverStatus) {
+        els.serverStatus.className = 'server-status disconnected';
+        els.serverStatus.innerHTML = '<span class="status-dot"></span>断线重连…';
+      }
     };
     return es;
+  } catch(e) { return null; }
   }
 
   // 降级：没有 SSE 就用 WS + 轮询
@@ -441,14 +496,28 @@
     const episodes = sc?.episodes || sb?.episodes || [];
     let totalShots = 0;
     episodes.forEach(ep => totalShots += (ep.shots||[]).length);
-    els.ovEpisodes.textContent = episodes.length || '—';
-    els.ovShots.textContent = totalShots || '—';
-    els.ovStatus.textContent = state.running ? '执行中' : '空闲';
-    if (state.startTime) els.ovTime.textContent = fmt((Date.now()-state.startTime)/1000);
+    if (els.ovEpisodes) els.ovEpisodes.textContent = episodes.length || '—';
+    if (els.ovShots) els.ovShots.textContent = totalShots || '—';
+    if (els.ovStatus) els.ovStatus.textContent = state.running ? '执行中' : '空闲';
+    if (els.ovTitle && sc?.title) els.ovTitle.textContent = sc.title;
+    if (state.startTime && els.ovTime) els.ovTime.textContent = fmt((Date.now()-state.startTime)/1000);
+    // Checkpoint
+    if (els.checkpointList) {
+      const cp = snap.pipeline?.checkpoint || {};
+      const steps = ['script','storyboard','character','image','video','subtitle','compose'];
+      els.checkpointList.innerHTML = steps.map(s => {
+        const done = cp[s] || (snap[s+'_agent'] ? true : false);
+        if (done) return `<div style="display:flex;align-items:center;gap:6px;padding:3px 0;font-size:11px"><span style="width:6px;height:6px;border-radius:50%;background:#00b894"></span> ✅ ${AGENT_LABELS[s]}</div>`;
+        return `<div style="display:flex;align-items:center;gap:6px;padding:3px 0;font-size:11px;color:#555570"><span style="width:6px;height:6px;border-radius:50%;background:#555570"></span> ▫️ ${AGENT_LABELS[s]}</div>`;
+      }).join('');
+    }
   }
 
   // ═══ Pipeline Start ═══
   async function startPipeline() {
+    // 全局暴露
+    window._approveReview = _approveReview;
+    window._rejectReview = _rejectReview;
     const text = els.storyInput.value.trim();
     if (!text) return;
 
@@ -546,19 +615,20 @@
   // ═══ Init ═══
   function init() {
     el();
+    exposeGlobals();
     resetAllCards();
     setProgress(0, '就绪');
-    els.logbar.classList.remove('expanded');
-    els.detailSection.style.display = 'none';
+    if (els.logbar) els.logbar.classList.remove('expanded');
+    if (els.detailSection) els.detailSection.style.display = 'none';
 
-    els.generateBtn.addEventListener('click', startPipeline);
-    els.stopBtn.addEventListener('click', stopPipeline);
-    els.detailClose.addEventListener('click', closeDetail);
-    els.drawerClose.addEventListener('click', closeHistory);
-    els.drawerOverlay.addEventListener('click', closeHistory);
-    els.historyBtn.addEventListener('click', openHistory);
-    els.logHandle.addEventListener('click', () => {
-      els.logbar.classList.toggle('expanded');
+    if (els.generateBtn) els.generateBtn.addEventListener('click', startPipeline);
+    if (els.stopBtn) els.stopBtn.addEventListener('click', stopPipeline);
+    if (els.detailClose) els.detailClose.addEventListener('click', closeDetail);
+    if (els.drawerClose) els.drawerClose.addEventListener('click', closeHistory);
+    if (els.drawerOverlay) els.drawerOverlay.addEventListener('click', closeHistory);
+    if (els.historyBtn) els.historyBtn.addEventListener('click', openHistory);
+    if (els.logHandle) els.logHandle.addEventListener('click', () => {
+      if (els.logbar) els.logbar.classList.toggle('expanded');
     });
     bindTabs();
     bindCardClicks();
