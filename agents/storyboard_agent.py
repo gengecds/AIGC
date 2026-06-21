@@ -8,6 +8,7 @@ import logging
 from datetime import datetime
 
 from agents.base import Agent, AgentResult
+from providers.base import LLMProvider
 from providers.llm import DeepSeekProvider, OllamaProvider
 
 logger = logging.getLogger(__name__)
@@ -133,9 +134,11 @@ class StoryboardAgent(Agent):
 
     name = "storyboard_agent"
 
-    def __init__(self, llm_provider: str = "deepseek"):
+    def __init__(self, llm_provider: Union[str, LLMProvider] = "deepseek"):
         super().__init__(name="storyboard_agent")
-        if llm_provider == "deepseek":
+        if isinstance(llm_provider, LLMProvider):
+            self.llm = llm_provider
+        elif llm_provider == "deepseek":
             self.llm = DeepSeekProvider()
         else:
             self.llm = OllamaProvider()
@@ -167,8 +170,8 @@ class StoryboardAgent(Agent):
             )
 
             raw = await self.llm.generate(
-                system=STORYBOARD_SYSTEM_PROMPT,
-                user=prompt,
+                prompt=prompt,
+                system_prompt=STORYBOARD_SYSTEM_PROMPT,
                 model="deepseek-chat",
             )
 

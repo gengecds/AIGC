@@ -12,6 +12,7 @@ from datetime import datetime
 from pathlib import Path
 
 from agents.base import Agent, AgentResult
+from providers.base import VideoProvider
 
 logger = logging.getLogger(__name__)
 
@@ -27,10 +28,13 @@ class VideoGenAgent(Agent):
 
     name = "video_agent"
 
-    def __init__(self, use_comfyui: bool = False, comfy_client=None):
+    def __init__(self, use_comfyui: bool = False, comfy_client=None,
+                 video_provider: VideoProvider | None = None):
         super().__init__(name="video_agent")
         self.use_comfyui = use_comfyui
-        if use_comfyui and comfy_client:
+        if video_provider is not None:
+            self.video_provider = video_provider
+        elif use_comfyui and comfy_client:
             from providers.comfyui_provider import ComfyHunyuanVideoProvider
             self.video_provider = ComfyHunyuanVideoProvider(client=comfy_client)
         else:
@@ -195,6 +199,10 @@ class VideoGenAgent(Agent):
         local_path = str(output_dir / fname)
         if Path(local_path).exists():
             return local_path
+        # 如果已经是本地路径，直接返回
+        if Path(fname).exists():
+            return fname
+        # 否则从 GPU 下载
         return await self._download_file(
             f"{GPU_OUTPUT_DIR}/{fname}", local_path
         )

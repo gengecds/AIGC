@@ -26,6 +26,20 @@ class ImageProvider(ABC):
         """返回图片路径或URL"""
         ...
 
+    async def batch_generate(self, items: list[dict], **kwargs) -> list[dict]:
+        """批量生成（默认逐个调用 generate，Provider 可覆盖实现优化）"""
+        results = []
+        for item in items:
+            path = await self.generate(
+                prompt=item.get("sd_prompt", ""),
+                ref_image=item.get("ref_image"),
+                seed=item.get("seed"),
+                shot_id=item.get("shot_id", ""),
+                **kwargs,
+            )
+            results.append({"filename": path, "subfolder": "", "type": "png"})
+        return results
+
 
 class VideoProvider(ABC):
     """视频生成"""
@@ -35,3 +49,17 @@ class VideoProvider(ABC):
                        duration: int = 5, **kwargs) -> str:
         """返回视频路径或URL"""
         ...
+
+    async def batch_generate(self, items: list[dict], **kwargs) -> list[dict]:
+        """批量生成（默认逐个调用 generate，Provider 可覆盖实现优化）"""
+        results = []
+        for item in items:
+            path = await self.generate(
+                input_image=item.get("input_image", ""),
+                prompt=item.get("video_motion", ""),
+                duration=item.get("duration", 5),
+                shot_id=item.get("shot_id", ""),
+                **kwargs,
+            )
+            results.append({"filename": path, "subfolder": "", "type": "mp4"})
+        return results

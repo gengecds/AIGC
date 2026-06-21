@@ -37,14 +37,17 @@ STORY = (
 
 if args.mock:
     from agents.base import AgentResult
-    from unittest.mock import AsyncMock
+    from providers.mock_provider import MockLLMProvider, MockImageProvider, MockVideoProvider
+    mock_llm = MockLLMProvider()
+    mock_img = MockImageProvider()
+    mock_vid = MockVideoProvider()
     print("⚠️ Mock 模式: 使用 MockProvider（0 API/GPU 费用）")
     agents = [
-        ScriptAgent(),
-        StoryboardAgent(),
-        CharacterDesignAgent(use_comfyui=False),
-        ImageGenAgent(use_comfyui=False),
-        VideoGenAgent(use_comfyui=False),
+        ScriptAgent(llm_provider=mock_llm),
+        StoryboardAgent(llm_provider=mock_llm),
+        CharacterDesignAgent(use_comfyui=False, image_provider=mock_img),
+        ImageGenAgent(use_comfyui=False, image_provider=mock_img),
+        VideoGenAgent(use_comfyui=False, video_provider=mock_vid),
         SubtitleAgent(),
         VideoComposeAgent(),
         PublishAgent(),

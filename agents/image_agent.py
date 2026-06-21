@@ -8,7 +8,7 @@ import logging
 from datetime import datetime
 
 from agents.base import Agent, AgentResult
-from providers.mock_provider import MockImageProvider
+from providers.base import ImageProvider
 
 logger = logging.getLogger(__name__)
 
@@ -18,9 +18,12 @@ class ImageGenAgent(Agent):
 
     name = "image_agent"
 
-    def __init__(self, use_comfyui: bool = False, comfy_client=None):
+    def __init__(self, use_comfyui: bool = False, comfy_client=None,
+                 image_provider: ImageProvider | None = None):
         super().__init__(name="image_agent")
-        if use_comfyui:
+        if image_provider is not None:
+            self.image_provider = image_provider
+        elif use_comfyui:
             from providers.comfyui_provider import ComfySDImageProvider
             self.image_provider = ComfySDImageProvider(client=comfy_client)
         else:

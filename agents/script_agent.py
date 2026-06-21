@@ -7,8 +7,10 @@ import json
 import logging
 import os
 from datetime import datetime
+from typing import Union
 
 from agents.base import Agent, AgentResult
+from providers.base import LLMProvider
 from providers.llm import DeepSeekProvider, OllamaProvider
 
 logger = logging.getLogger(__name__)
@@ -61,9 +63,11 @@ class ScriptAgent(Agent):
 
     name = "script_agent"
 
-    def __init__(self, llm_provider: str = "deepseek"):
+    def __init__(self, llm_provider: Union[str, LLMProvider] = "deepseek"):
         super().__init__(name="script_agent")
-        if llm_provider == "deepseek":
+        if isinstance(llm_provider, LLMProvider):
+            self.llm = llm_provider
+        elif llm_provider == "deepseek":
             self.llm = DeepSeekProvider()
         else:
             self.llm = OllamaProvider()
@@ -79,8 +83,8 @@ class ScriptAgent(Agent):
 
         try:
             raw = await self.llm.generate(
-                system=SCRIPT_SYSTEM_PROMPT,
-                user=user_input,
+                prompt=user_input,
+                system_prompt=SCRIPT_SYSTEM_PROMPT,
                 model="deepseek-chat",
             )
 

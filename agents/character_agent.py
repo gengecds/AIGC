@@ -7,9 +7,10 @@
 
 import json, logging, os
 from datetime import datetime
-from typing import Optional
+from typing import Optional, Union
 
 from agents.base import Agent, AgentResult
+from providers.base import ImageProvider
 
 logger = logging.getLogger(__name__)
 
@@ -20,10 +21,13 @@ class CharacterDesignAgent(Agent):
     name = "character_agent"
 
     def __init__(self, use_comfyui: bool = False,
-                 comfy_client=None):
+                 comfy_client=None,
+                 image_provider: Union[str, ImageProvider, None] = None):
         super().__init__(name="character_agent")
         self._comfy_client = comfy_client
-        if use_comfyui and comfy_client:
+        if isinstance(image_provider, ImageProvider):
+            self.image_provider = image_provider
+        elif use_comfyui and comfy_client:
             from providers.comfyui_provider import ComfySDImageProvider
             self.image_provider = ComfySDImageProvider(client=comfy_client)
         else:
