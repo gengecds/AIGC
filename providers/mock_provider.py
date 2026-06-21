@@ -19,20 +19,25 @@ class MockImageProvider:
         logger.info("[MockImageProvider] 已初始化，0 API 费用")
 
     async def generate(self, prompt: str, ref_image: str | None = None,
-                       seed: int = -1) -> str:
-        """返回一个假的占位图片路径"""
+                       seed: int = -1) -> dict:
+        """返回一个假的占位图片信息（统一 dict 格式）"""
         fake_name = f"mock_img_{abs(hash(prompt)) % 10000}_{seed}.png"
         fake_path = self.output_dir / fake_name
-        # 创建一个1x1的假PNG占位
         if not fake_path.exists():
             fake_path.write_bytes(
                 b'\x89PNG\r\n\x1a\n' + b'\x00' * 100
             )
         logger.info(f"[Mock] 出图: {fake_path}")
-        return str(fake_path)
+        return {
+            "filename": fake_name,
+            "subfolder": "",
+            "type": "output",
+            "prompt_id": f"mock_{seed}",
+            "local_path": str(fake_path),
+        }
 
-    async def batch_generate(self, shots: list[dict]) -> list[str]:
-        """并行批量出图，返回路径列表"""
+    async def batch_generate(self, shots: list[dict]) -> list[dict]:
+        """并行批量出图，返回 dict 列表"""
         import asyncio
         async def gen_one(shot):
             return await self.generate(
@@ -44,7 +49,7 @@ class MockImageProvider:
 
 
 class MockVideoProvider:
-    """Mock 图生视频 — 返回假路径"""
+    """Mock 图生视频 — 返回假信息"""
 
     def __init__(self, output_dir: str = "storage/output"):
         self.output_dir = Path(output_dir)
@@ -52,16 +57,21 @@ class MockVideoProvider:
         logger.info("[MockVideoProvider] 已初始化，0 API 费用")
 
     async def generate(self, input_image: str, prompt: str = "",
-                       duration: int = 5) -> str:
-        """返回一个假的占位视频路径"""
+                       duration: int = 5) -> dict:
+        """返回假的视频信息（统一 dict 格式）"""
         fake_name = f"mock_vid_{abs(hash(input_image)) % 10000}_{duration}s.mp4"
         fake_path = self.output_dir / fake_name
         if not fake_path.exists():
             fake_path.write_text("mock video placeholder")
         logger.info(f"[Mock] 视频: {fake_path}")
-        return str(fake_path)
+        return {
+            "filename": fake_name,
+            "subfolder": "",
+            "type": "output",
+            "local_path": str(fake_path),
+        }
 
-    async def batch_generate(self, images: list[dict]) -> list[str]:
+    async def batch_generate(self, images: list[dict]) -> list[dict]:
         """并行批量图生视频"""
         import asyncio
         async def gen_one(img):

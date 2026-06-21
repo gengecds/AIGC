@@ -1,11 +1,11 @@
 engine:
-  image_provider: "mock"        # 开发: mock | 生产: comfyui
-  video_provider: "mock"        # 开发: mock | 生产: comfyui
+  image_provider: "comfyui"    # 开发: mock | 生产: comfyui
+  video_provider: "comfyui"    # 开发: mock | 生产: comfyui
   llm_provider: "deepseek"     # 开发/生产: deepseek
 
 comfyui:
   host: "127.0.0.1"
-  port: 8188
+  port: 18188
   timeout: 600
   docker_image: ""              # ComfyUI Docker镜像地址（阿里云容器仓库）
 

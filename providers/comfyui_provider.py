@@ -1,11 +1,20 @@
 """ComfyUI Provider - 通过 ComfyUI API 实现 SD 出图和视频生成"""
 
-import logging, json, copy
+import logging
+import json
+import copy
+import requests as _requests
 from typing import Optional
 from pathlib import Path
 
 from providers.base import ImageProvider, VideoProvider
 from providers.comfyui.client import ComfyUIClient
+
+
+# 代理豁免：避免被 Grammarly 7890 本地代理拦截
+def _noget(url, **kw):
+    kw["proxies"] = {"http": None, "https": None}
+    return _requests.get(url, **kw)
 
 logger = logging.getLogger(__name__)
 
@@ -89,7 +98,7 @@ class ComfySDImageProvider(ImageProvider):
         while pending_ids and (time.time() - start) < timeout:
             time.sleep(3)
             try:
-                hist = requests.get(history_url, timeout=5).json()
+                hist = _noget(history_url, timeout=5).json()
             except Exception:
                 continue
             for pid in list(pending_ids.keys()):
@@ -102,7 +111,7 @@ class ComfySDImageProvider(ImageProvider):
         for s in submitted:
             pid = s["prompt_id"]
             try:
-                hist = requests.get(history_url, timeout=5).json()
+                hist = _noget(history_url, timeout=5).json()
                 if pid in hist:
                     outputs = hist[pid]["outputs"]
                     for node_out in outputs.values():
@@ -202,7 +211,7 @@ class ComfyHunyuanVideoProvider(VideoProvider):
         while pending_ids and (time.time() - start) < timeout:
             time.sleep(10)
             try:
-                hist = requests.get(history_url, timeout=5).json()
+                hist = _noget(history_url, timeout=5).json()
             except Exception:
                 continue
             for pid in list(pending_ids.keys()):
@@ -210,7 +219,7 @@ class ComfyHunyuanVideoProvider(VideoProvider):
                     s = pending_ids.pop(pid)
                     logger.info(f"[Video] 完成: shot={s['shot_id']}")
                     try:
-                        q = requests.get(queue_url, timeout=3).json()
+                        q = _noget(queue_url, timeout=3).json()
                         r = len(q.get("queue_running", []))
                         p = len(q.get("queue_pending", []))
                         logger.info(f"[Video] 队列状态: {r}运行/{p}待处理")
@@ -226,7 +235,7 @@ class ComfyHunyuanVideoProvider(VideoProvider):
         for s in submitted:
             pid = s["prompt_id"]
             try:
-                hist = requests.get(history_url, timeout=5).json()
+                hist = _noget(history_url, timeout=5).json()
                 if pid in hist:
                     outputs = hist[pid]["outputs"]
                     frames = []

@@ -40,17 +40,19 @@ class ImageGenAgent(Agent):
 
             shot_data = []
             for shot in shots:
+                # 取第一个角色名作为 ref_image 查询 key
+                char_list = shot.get("characters") or []
+                first_char = char_list[0] if isinstance(char_list, list) and char_list else None
+                ref_path = None
+                if character_assets and first_char:
+                    asset = character_assets.get(first_char, {})
+                    ref_path = asset.get("controlnet_ref_path")
                 shot_data.append({
                     "shot_id": str(shot["shot_id"]),
                     "sd_prompt": shot.get("sd_prompt", ""),
                     "sd_negative": shot.get("sd_negative", ""),
                     "seed": shot.get("seed", -1),
-                    "ref_image": (
-                        character_assets.get(
-                            shot.get("characters", [None])[0] if isinstance(shot.get("characters"), list) else shot.get("characters", None),
-                            {}
-                        ).get("controlnet_ref_path")
-                    ) if character_assets else None,
+                    "ref_image": ref_path,
                 })
 
             # batch_generate 返回 list[dict]，转为 {shot_id: file_info} 格式

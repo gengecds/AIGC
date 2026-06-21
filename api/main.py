@@ -66,10 +66,22 @@ async def health():
     return {"status": "ok"}
 
 
+# ── 静态文件 ─────────────────────────
+
+# 前端文件
+frontend_dir = Path(__file__).parent.parent / "frontend"
+app.mount("/frontend", StaticFiles(directory=str(frontend_dir), html=True), name="frontend")
+
+# storage/output 作为视频源
+output_dir = Path(__file__).parent.parent / "storage" / "output"
+os.makedirs(str(output_dir), exist_ok=True)
+app.mount("/storage/output", StaticFiles(directory=str(output_dir)), name="output")
+
+
 # ── 导入路由 ─────────────────────────
 
-from api.routes.pipeline import router as pipeline_router
-app.include_router(pipeline_router)
+from api.routes.pipeline import register_pipeline_routes
+register_pipeline_routes(app)
 
 
 if __name__ == "__main__":

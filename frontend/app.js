@@ -1,312 +1,576 @@
 /**
  * AI 漫剧制作平台 — 前端控制器
- * 支持 GPU 状态轮询、管线进度展示、分镜/角色/视频预览
+ * 完全贴合 前端展示方案.md 的设计
+ * 状态机：空闲 → 排队 → 执行⏳ → ⏸️待审核 / ❌失败 / ✅完成
  */
-(function() {
+(function(){
   'use strict';
 
-  // ===== 配置 =====
-  const CONFIG = {
-    apiBase: '',  // 后续可对接后端
-    pollInterval: 3000,  // GPU 状态轮询间隔 (ms)
+  const API = 'http://127.0.0.1:8000';
+  const AGENTS = ['script','storyboard','character','image','video','subtitle','compose'];
+  const AGENT_LABELS = { script:'剧本', storyboard:'分镜', character:'定妆照', image:'出图', video:'视频', subtitle:'字幕', compose:'合成' };
+  const AGENT_ICONS = { script:'📝', storyboard:'📋', character:'🎭', image:'🖼️', video:'🎬', subtitle:'📄', compose:'📦' };
+
+  const $ = s => document.querySelector(s);
+  const $$ = s => document.querySelectorAll(s);
+
+  let state = {
+    pipelineId: null, running: false, startTime: null,
+    cards: {},   // agent -> {status,meta}
+    detailAgent: null,
+    ws: null, logCount: 0,
   };
 
-  // ===== 状态 =====
-  const state = {
-    story: '',
-    pipelineId: null,
-    currentStep: 5,  // 当前在步骤5（视频生成）
-    totalSteps: 7,
-    characters: [
-      { id: 1, name: '主角·程序', role: '程序员（穿越者）', image: null },
-      { id: 2, name: '小白', role: '猫娘向导', image: null },
-      { id: 3, name: '橘长老', role: '猫娘长老', image: null },
-      { id: 4, name: '黑爪', role: '反派猫娘', image: null },
-    ],
-    shots: [
-      { id: 1, desc: '程序深夜写代码，屏幕蓝光映照疲惫的脸', image: null },
-      { id: 2, desc: '键盘突然发光，程序被吸入屏幕', image: null },
-      { id: 3, desc: '程序醒来，发现身处猫娘世界', image: null },
-      { id: 4, desc: '小白发现程序是人类，惊讶', image: null },
-      { id: 5, desc: '小白带程序去见橘长老', image: null },
-      { id: 6, desc: '橘长老解释穿越原因，需要程序拯救世界', image: null },
-    ],
-    videos: [],
-    gpuInfo: { model: 'RTX 4090', memoryUsed: '3.7', memoryTotal: '24.6' },
-    queueRunning: 1,
-    queuePending: 5,
-    pipelineStartTime: null,
-  };
-
-  // ===== DOM 引用 =====
-  const $ = (sel) => document.querySelector(sel);
-  const $$ = (sel) => document.querySelectorAll(sel);
-
-  const DOM = {};
-  const initDom = () => {
-    DOM.storyInput = $('#storyInput');
-    DOM.generateBtn = $('#generateBtn');
-    DOM.stopBtn = $('#stopBtn');
-    DOM.progressCard = $('#progressCard');
-    DOM.progressFill = $('#progressFill');
-    DOM.progressDetail = $('#progressDetail');
-    DOM.progressTitle = $('#progressTitle');
-    DOM.progressTime = $('#progressTime');
-    DOM.charactersPanel = $('#charactersPanel');
-    DOM.characterGrid = $('#characterGrid');
-    DOM.charCount = $('#charCount');
-    DOM.shotsPanel = $('#shotsPanel');
-    DOM.shotGrid = $('#shotGrid');
-    DOM.shotCount = $('#shotCount');
-    DOM.videoPanel = $('#videoPanel');
-    DOM.videoGrid = $('#videoGrid');
-    DOM.videoCount = $('#videoCount');
-    DOM.emptyState = $('#emptyState');
-    DOM.stepBadge = $('#stepBadge');
-    DOM.gpuInfo = $('#gpuInfo');
-    DOM.queueInfo = $('#queueInfo');
-    DOM.serverStatus = $('#serverStatus');
-    DOM.exportBtn = $('#exportBtn');
-  };
-
-  // ===== 工具函数 =====
-  function formatTime(seconds) {
-    const m = Math.floor(seconds / 60);
-    const s = Math.floor(seconds % 60);
-    return `${m}:${s.toString().padStart(2, '0')}`;
+  const els = {};
+  function el() {
+    els.storyInput = $('#storyInput');
+    els.generateBtn = $('#generateBtn');
+    els.stopBtn = $('#stopBtn');
+    els.gpBar = $('#globalProgress');
+    els.gpFill = $('#gpFill');
+    els.gpText = $('#gpText');
+    els.serverStatus = $('#serverStatus');
+    els.logList = $('#logList');
+    els.logCount = $('#logCount');
+    els.logHandle = $('#logHandle');
+    els.logbar = $('#logbar');
+    els.detailSection = $('#detailSection');
+    els.detailTitle = $('#detailTitle');
+    els.detailBody = $('#detailBody');
+    els.detailActions = $('#detailActions');
+    els.detailClose = $('#detailClose');
+    els.drawerOverlay = $('#drawerOverlay');
+    els.historyDrawer = $('#historyDrawer');
+    els.drawerBody = $('#drawerBody');
+    els.drawerClose = $('#drawerClose');
+    els.historyBtn = $('#historyBtn');
+    els.assetChars = $('#assetChars');
+    els.assetScenes = $('#assetScenes');
+    els.stylePicker = $('#stylePicker');
+    els.ovStatus = $('#ovStatus');
+    els.ovEpisodes = $('#ovEpisodes');
+    els.ovShots = $('#ovShots');
+    els.ovTime = $('#ovTime');
+    els.ovRemain = $('#ovRemain');
+    els.detailPanel = $('#detailPanel');
+    // Tab
+    els.tabBtns = $$('.tab');
+    els.tabContents = [document.getElementById('tab-assets'), document.getElementById('tab-overview')];
   }
 
-  function escapeHtml(text) {
-    const div = document.createElement('div');
-    div.textContent = text;
-    return div.innerHTML;
+  function esc(t) { const d=document.createElement('div'); d.textContent=t; return d.innerHTML; }
+  function fmt(t) { const m=Math.floor(t/60); const s=Math.floor(t%60); return `${m}:${s.toString().padStart(2,'0')}`; }
+
+  // ═══ Card State Machine ═══
+  function setCardState(agent, status, meta) {
+    const card = document.querySelector(`.chain-card[data-agent="${agent}"]`);
+    if (!card) return;
+    // 状态: idle|queued|running|review|done|failed
+    AGENTS.forEach(a => document.querySelector(`.chain-card[data-agent="${a}"]`).className = 'chain-card');
+    card.classList.add('state-'+status);
+    const stEl = document.getElementById('status-'+agent);
+    const meEl = document.getElementById('meta-'+agent);
+    const statusLabels = { idle:'空闲', queued:'⏳ 排队', running:'⏳ 执行中…', review:'⏸️ 待确认', done:'✅ 完成', failed:'❌ 失败' };
+    stEl.textContent = statusLabels[status] || status;
+    meEl.textContent = meta || '';
+    state.cards[agent] = { status, meta };
   }
 
-  // ===== 渲染函数 =====
-
-  /** 渲染角色卡片 */
-  function renderCharacters(characters) {
-    if (!characters || characters.length === 0) return;
-    DOM.charactersPanel.style.display = '';
-    DOM.charCount.textContent = `${characters.length} 个角色`;
-
-    DOM.characterGrid.innerHTML = characters.map(c => `
-      <div class="char-card">
-        <div class="char-avatar">
-          ${c.image ? `<img src="${c.image}" alt="${escapeHtml(c.name)}">` : '👤'}
-        </div>
-        <div class="char-name">${escapeHtml(c.name)}</div>
-        <div class="char-role">${escapeHtml(c.role)}</div>
-      </div>
-    `).join('');
+  function resetAllCards() {
+    AGENTS.forEach(a => setCardState(a, 'idle', ''));
   }
 
-  /** 渲染分镜网格 */
-  function renderShots(shots) {
-    if (!shots || shots.length === 0) return;
-    DOM.shotsPanel.style.display = '';
-    DOM.shotCount.textContent = `${shots.length} 镜头`;
-
-    DOM.shotGrid.innerHTML = shots.map(s => `
-      <div class="shot-card">
-        <div class="shot-image">
-          ${s.image ? `<img src="${s.image}" alt="镜头 ${s.id}">` : `🎬`}
-        </div>
-        <div class="shot-info">
-          <div class="shot-num">镜头 #${s.id}</div>
-          <div class="shot-desc">${escapeHtml(s.desc)}</div>
-        </div>
-      </div>
-    `).join('');
+  // ═══ Global Progress ═══
+  function setProgress(pct, text) {
+    els.gpBar.style.display = '';
+    els.gpFill.style.width = Math.min(100, Math.max(0, pct)) + '%';
+    els.gpText.textContent = text || '';
   }
 
-  /** 渲染视频列表 */
-  function renderVideos(videos) {
-    if (!videos || videos.length === 0) {
-      if (state.currentStep >= 5) {
-        DOM.videoPanel.style.display = '';
-        DOM.videoGrid.innerHTML = `
-          <div style="grid-column:1/-1;padding:40px;text-align:center;color:var(--text-muted)">
-            <div style="font-size:32px;margin-bottom:8px">🎥</div>
-            <div>视频生成中（GPU 排队…）</div>
-          </div>`;
-        DOM.videoCount.textContent = '生成中';
-      }
-      return;
+  // ═══ Log ═══
+  function addLog(level, agent, msg) {
+    const entry = document.createElement('div');
+    entry.className = 'log-entry ' + level;
+    const t = new Date();
+    const ts = t.toTimeString().slice(0,8);
+    entry.innerHTML = `<span class="time">${ts}</span>[${AGENT_LABELS[agent]||agent}] ${esc(msg)}`;
+    els.logList.prepend(entry);
+    state.logCount++;
+    els.logCount.textContent = state.logCount;
+    // 自动扩展
+    if (!els.logbar.classList.contains('expanded')) {
+      els.logbar.classList.add('expanded');
     }
-    DOM.videoPanel.style.display = '';
-    DOM.videoCount.textContent = `${videos.length} 段`;
-
-    DOM.videoGrid.innerHTML = videos.map(v => `
-      <div class="video-card">
-        <div class="video-player">
-          ${v.src ? `<video controls preload="metadata"><source src="${v.src}" type="video/mp4"></video>` : '⏳'}
-        </div>
-        <div class="video-info">
-          <div class="video-num">镜头 #${v.shotId || '?'}</div>
-        </div>
-      </div>
-    `).join('');
   }
 
-  /** 更新进度 */
-  function updateProgress(step, total, detail) {
-    DOM.progressCard.style.display = '';
-    const pct = Math.round((step / total) * 100);
-    DOM.progressFill.style.width = `${pct}%`;
-    DOM.stepBadge.textContent = `${step}/${total}`;
+  // ═══ Detail Panel ═══
+  let _detailAgent = '';
+  let _detailReviewReason = '';
 
-    const labels = ['', '剧本生成', '分镜拆解', '角色定妆', '场景出图', '图生视频', '字幕生成', '合成输出'];
-    DOM.progressTitle.textContent = `步骤 ${step}: ${labels[step] || '处理中…'}`;
-    DOM.progressDetail.textContent = detail || '';
+  function openDetail(title, html, agent='', reviewReason='') {
+    _detailAgent = agent;
+    _detailReviewReason = reviewReason;
+    els.detailTitle.textContent = title;
+    els.detailBody.innerHTML = html;
+    // 审核按钮区
+    if (agent && reviewReason) {
+      els.detailActions.style.display = 'flex';
+      els.detailActions.innerHTML = `
+        <div class="review-bar">
+          <span>⏸️ ${reviewReason}</span>
+          <div class="review-btns">
+            <button class="btn btn-primary btn-sm" onclick="window._approveReview()">✅ 确认</button>
+            <button class="btn btn-danger btn-sm" onclick="window._rejectReview()">🔄 重跑</button>
+          </div>
+        </div>
+      `;
+    } else {
+      els.detailActions.style.display = 'none';
+    }
+    els.detailSection.style.display = '';
+    state.detailAgent = title;
+  }
 
-    // 更新工作流侧栏状态
-    $$('.step').forEach(el => {
-      const s = parseInt(el.dataset.step);
-      el.className = 'step' +
-        (s < step ? ' completed' : '') +
-        (s === step ? ' active' : '') +
-        (s > step ? ' pending' : '');
+  window._approveReview = async () => {
+    const pid = state.pipelineId;
+    if (!pid) return;
+    try {
+      await fetch(API + '/api/v1/pipeline/approve/' + pid, { method:'POST', mode:'cors' });
+      addLog('INFO', 'review', '✅ 已确认，管线继续');
+      els.detailActions.style.display = 'none';
+    } catch(e) {
+      addLog('ERROR', 'review', '确认失败: '+e.message);
+    }
+  };
+
+  window._rejectReview = async () => {
+    const pid = state.pipelineId;
+    if (!pid) return;
+    try {
+      await fetch(API + '/api/v1/pipeline/reject/' + pid, { method:'POST', mode:'cors', headers:{'Content-Type':'application/json'}, body:'{}' });
+      addLog('INFO', 'review', '🔄 已拒绝，等待重跑');
+      els.detailActions.style.display = 'none';
+    } catch(e) {
+      addLog('ERROR', 'review', '拒绝失败: '+e.message);
+    }
+  };
+
+  function closeDetail() {
+    els.detailSection.style.display = 'none';
+    els.detailActions.style.display = 'none';
+    state.detailAgent = null;
+    _detailAgent = '';
+    _detailReviewReason = '';
+  }
+
+  // ═══ Card Click → Detail ═══
+  function bindCardClicks() {
+    $$('.chain-card').forEach(card => {
+      card.addEventListener('click', async () => {
+        const agent = card.dataset.agent;
+        if (state.cards[agent]?.status === 'idle') return;
+        await renderDetail(agent);
+      });
     });
   }
 
-  /** 更新 GPU 信息 */
-  function updateGPUInfo() {
-    const { gpuInfo, queueRunning, queuePending } = state;
-    DOM.gpuInfo.textContent = `${gpuInfo.model} · ${gpuInfo.memoryUsed}/${gpuInfo.memoryTotal} GB`;
-    DOM.queueInfo.textContent = `队列: ${queueRunning} 运行 · ${queuePending} 等待`;
-
-    if (state.pipelineStartTime) {
-      const elapsed = (Date.now() - state.pipelineStartTime) / 1000;
-      DOM.progressTime.textContent = formatTime(elapsed);
-    }
-  }
-
-  /** 显示空状态或隐藏 */
-  function updateEmptyState(hasContent) {
-    DOM.emptyState.style.display = hasContent ? 'none' : '';
-  }
-
-  // ===== 核心操作 =====
-
-  /** 开始生成管线 */
-  function startPipeline() {
-    const story = DOM.storyInput.value.trim();
-    if (!story) {
-      DOM.storyInput.focus();
-      return;
-    }
-    state.story = story;
-    state.pipelineStartTime = Date.now();
-    state.currentStep = 1;
-
-    // 清空旧结果
-    DOM.charactersPanel.style.display = 'none';
-    DOM.shotsPanel.style.display = 'none';
-    DOM.videoPanel.style.display = 'none';
-    updateEmptyState(false);
-
-    DOM.generateBtn.disabled = true;
-    DOM.generateBtn.textContent = '⏳ 生成中…';
-    DOM.stopBtn.style.display = '';
-
-    // 启动进度模拟（实际应用会对接WS）
-    simulatePipeline();
-  }
-
-  /** 模拟管线进度（展示用，后续对接真实后端） */
-  function simulatePipeline() {
-    const steps = [
-      { step: 1, delay: 2000, detail: 'DeepSeek 创作剧本…' },
-      { step: 2, delay: 2500, detail: '分解镜头结构…' },
-      { step: 3, delay: 8000, detail: 'ComfyUI 生成角色定妆照…' },
-      { step: 4, delay: 12000, detail: 'ComfyUI SD 批量出图中…' },
-      { step: 5, delay: 3000, detail: 'HunyuanVideo 图生视频（排队中）' },
-      { step: 6, delay: 2000, detail: 'ASR 语音识别 + 字幕打轴…' },
-      { step: 7, delay: 4000, detail: 'FFmpeg 合成最终输出…' },
-    ];
-
-    let i = 0;
-    function nextStep() {
-      if (i >= steps.length) {
-        finishPipeline();
-        return;
+  async function renderDetail(agent, reviewReason='') {
+    try {
+      const resp = await fetch(API + '/api/v1/pipeline/snapshot/latest', { mode:'cors' });
+      if (!resp.ok) return;
+      const snap = await resp.json();
+      let title = AGENT_LABELS[agent] || agent;
+      let review = reviewReason;
+      // 如果卡片是 review 状态但没传 reason，自动加
+      if (!review && state.cards[agent]?.status === 'review') {
+        review = state.cards[agent].meta || '请确认结果';
       }
-      const s = steps[i];
-      state.currentStep = s.step;
-      updateProgress(s.step, 7, s.detail);
+      let html = '';
 
-      // 渲染对应数据
-      if (s.step === 3) renderCharacters(state.characters);
-      if (s.step === 4) renderShots(state.shots);
-
-      setTimeout(nextStep, s.delay);
-      i++;
-    }
-
-    nextStep();
-  }
-
-  /** 管线完成 */
-  function finishPipeline() {
-    state.currentStep = 7;
-    updateProgress(7, 7, '✅ 已完成');
-
-    DOM.generateBtn.disabled = false;
-    DOM.generateBtn.textContent = '▶ 开始生成';
-    DOM.stopBtn.style.display = 'none';
-
-    // 显示假视频
-    state.videos = state.shots.map(s => ({
-      shotId: s.id,
-      src: null, // 生产环境填真实路径
-    }));
-    renderVideos(state.videos);
-  }
-
-  /** 停止生成 */
-  function stopPipeline() {
-    // TODO: 真实环境中断队列
-    DOM.generateBtn.disabled = false;
-    DOM.generateBtn.textContent = '▶ 开始生成';
-    DOM.stopBtn.style.display = 'none';
-  }
-
-  /** 导出全部视频 */
-  function exportAll() {
-    // TODO: 真实环境打包下载
-    alert('导出功能：将打包所有视频为 ZIP（开发中）');
-  }
-
-  // ===== 事件绑定 =====
-  function bindEvents() {
-    DOM.generateBtn.addEventListener('click', startPipeline);
-    DOM.stopBtn.addEventListener('click', stopPipeline);
-    DOM.exportBtn.addEventListener('click', exportAll);
-
-    // 快捷键 Ctrl+Enter
-    DOM.storyInput.addEventListener('keydown', (e) => {
-      if ((e.ctrlKey || e.metaKey) && e.key === 'Enter') {
-        e.preventDefault();
-        startPipeline();
+      switch(agent) {
+        case 'script': {
+          const sc = snap.script_agent;
+          if (!sc) { html = '<div class="empty-state"><div class="icon">📝</div>暂无数据</div>'; break; }
+          let diaHtml = '';
+          const episodes = sc.episodes || sc.data?.episodes || [];
+          episodes.forEach((ep, i) => {
+            const lines = ep.dialogues || ep.dialogues || [];
+            diaHtml += `<div style="margin-bottom:12px"><strong>第${ep.episode_number||i+1}集</strong>`;
+            (lines||[]).forEach(d => {
+              diaHtml += `<div class="dialogue"><span class="char-name">[${esc(d.character||d.char_name||'')}]</span> <span class="text">${esc(d.text||d.content||'')}</span></div>`;
+            });
+            diaHtml += '</div>';
+          });
+          html = `<div class="script-detail">${diaHtml}</div>`;
+          break;
+        }
+        case 'storyboard': {
+          const sb = snap.storyboard_agent;
+          if (!sb) { html = '<div class="empty-state"><div class="icon">📋</div>暂无数据</div>'; break; }
+          const eps = sb.episodes || [];
+          let rows = '';
+          let totalShots = 0;
+          eps.forEach((ep, ei) => {
+            (ep.shots||[]).forEach((sh, si) => {
+              totalShots++;
+              rows += `<tr><td>${ei+1}.${sh.shot_id||si+1}</td><td>${esc(sh.type||sh.camera||'')}</td><td><input value="${esc(sh.description||sh.desc||'')}" /></td><td style="font-size:10px;color:var(--text-muted)">${(sh.duration||'')}</td></tr>`;
+            });
+          });
+          html = `<table class="sb-table"><thead><tr><th style="width:50px">序号</th><th style="width:60px">景别</th><th>描述（可编辑）</th><th style="width:50px">时长</th></tr></thead><tbody>${rows}</tbody></table>`;
+          break;
+        }
+        case 'character': {
+          const ch = snap.character_agent;
+          const chars = ch?.characters || [];
+          html = '<div class="char-detail-grid">' + chars.map(c => {
+            const imgSrc = c.image || (c.asset?.controlnet_ref_path || '');
+            return `<div class="char-detail-card"><div class="char-name">${esc(c.name)}</div>${imgSrc ? `<img src="${imgSrc}" alt="${esc(c.name)}">` : '👤'}<div style="font-size:10px;color:var(--text-muted)">${esc(c.role||c.type||'')}</div></div>`;
+          }).join('') + '</div>';
+          break;
+        }
+        case 'image': {
+          const im = snap.image_agent;
+          const images = im?.images || {};
+          let imgs = `<div class="img-detail-grid">`;
+          let idx = 0;
+          for (const ek in images) {
+            for (const sk in images[ek]) {
+              const img = images[ek][sk];
+              idx++;
+              const fn = img.filename || '';
+              const url = fn ? `/storage/output/${fn}` : '';
+              imgs += `<div class="img-detail-item"><span class="badge">#${idx}</span>${url ? `<img src="${url}" alt="ep${ek}_shot${sk}">` : '🖼️'}</div>`;
+            }
+          }
+          imgs += '</div>';
+          html = imgs;
+          break;
+        }
+        case 'video': {
+          const vd = snap.video_agent;
+          const videos = vd?.videos || vd?.data?.videos || {};
+          let vhtml = '<div class="video-detail-grid">';
+          for (const ek in videos) {
+            for (const sk in videos[ek]) {
+              const v = videos[ek][sk];
+              const src = v.local_path || '';
+              const proxySrc = src.includes('/storage/output/') ? src : (src ? '/storage/output/' + src.split('/').pop() : '');
+              vhtml += `<div class="video-detail-item">${proxySrc ? `<video controls preload="metadata"><source src="${proxySrc}" type="video/mp4"></video>` : '⏳'}</div>`;
+            }
+          }
+          vhtml += '</div>';
+          html = vhtml || '<div class="empty-state"><div class="icon">🎬</div>视频生成中…</div>';
+          break;
+        }
+        case 'subtitle': {
+          const sub = snap.subtitle_agent;
+          const srt = sub?.srt_files || sub?.data?.srt_files || {};
+          let lines = '';
+          for (const ek in srt) {
+            const content = srt[ek];
+            if (typeof content === 'string') {
+              content.split('\n').filter(l => l.includes('-->')).forEach(t => lines += `<div class="subtitle-line"><span class="time">${esc(t)}</span></div>`);
+            }
+          }
+          html = lines || '<div class="empty-state"><div class="icon">📄</div>暂无字幕</div>';
+          break;
+        }
+        case 'compose': {
+          const cp = snap.compose_agent;
+          const pub = cp?.published || cp?.data?.published || [];
+          if (!pub.length) { html = '<div class="empty-state"><div class="icon">📦</div>合成中…</div>'; break; }
+          let chtml = '';
+          pub.forEach(p => {
+            let src = p.final_path || '';
+            if (src.includes('/storage/output/')) {
+              const parts = src.split('/storage/output/');
+              src = '/storage/output/' + parts[1];
+            } else if (src) {
+              src = '/storage/output/' + src.split('/').pop();
+            }
+            chtml += `<div class="compose-player"><strong style="font-size:13px">第${p.episode_number||'?'}集</strong><br>${src ? `<video controls preload="metadata"><source src="${src}" type="video/mp4"></video>` : '⏳'}</div>`;
+          });
+          html = chtml;
+          break;
+        }
+        default: html = '<div class="empty-state">未知</div>';
       }
+      openDetail(title, html, agent, review);
+    } catch(e) {
+      openDetail(AGENT_LABELS[agent]||agent, '<div class="empty-state"><div class="icon">⚠️</div>加载失败</div>', agent, review);
+    }
+  }
+
+  // ═══ SSE / Backend Connection ═══
+  function connectSSE() {
+    // 用 Server-Sent Events
+    const es = new EventSource(API + '/api/v1/pipeline/events/stream');
+    es.onopen = () => {
+      els.serverStatus.className = 'server-status';
+      els.serverStatus.innerHTML = '<span class="status-dot"></span>GPU 在线';
+    };
+    es.addEventListener('log', e => {
+      try {
+        const d = JSON.parse(e.data);
+        addLog(d.level||'INFO', d.agent, d.message);
+      } catch(e) {}
     });
+    es.addEventListener('status', e => {
+      try {
+        const d = JSON.parse(e.data);
+        setCardState(d.agent, d.status||'running', d.progress_text||'');
+      } catch(e) {}
+    });
+    es.addEventListener('agent_done', e => {
+      try {
+        const d = JSON.parse(e.data);
+        setCardState(d.agent, d.review ? 'review' : 'done', d.summary_text||'');
+      } catch(e) {}
+    });
+    es.addEventListener('agent_blocked', e => {
+      try {
+        const d = JSON.parse(e.data);
+        setCardState(d.agent, 'review', d.reason||'等待审核');
+        setProgress(parseInt(d.progress||'0'), `⏸️ 等待人工确认：${d.reason||'请检查'}`);
+        state.pipelineId = d.pipeline_id || state.pipelineId;
+        // 自动打开详情
+        renderDetail(d.agent, d.reason||'等待审核');
+      } catch(e) {}
+    });
+    es.addEventListener('review_approved', e => {
+      try {
+        const d = JSON.parse(e.data);
+        const agent = d.agent || state.pausedAgent;
+        if (agent) setCardState(agent, 'pending', '已确认，继续…');
+        setProgress(parseInt(d.progress||'0'), '✅ 已确认，继续管线');
+      } catch(e) {}
+    });
+    es.addEventListener('review_rejected', e => {
+      try {
+        const d = JSON.parse(e.data);
+        const agent = d.agent || state.pausedAgent;
+        if (agent) setCardState(agent, 'failed', '已拒绝');
+        setProgress(0, '❌ 已拒绝，等待修改');
+      } catch(e) {}
+    });
+    es.addEventListener('shot_done', e => {
+      try {
+        const d = JSON.parse(e.data);
+        addLog('INFO', d.agent, `🖼 ${d.label||'产出'}完成 (${d.index}/${d.total})`);
+      } catch(e) {}
+    });
+    es.addEventListener('pipeline_done', e => {
+      try {
+        const d = JSON.parse(e.data);
+        setProgress(100, '✅ 全部完成！');
+        addLog('SUCCESS', '', '管线全部完成！');
+        doneUI();
+        refreshSnapshot();
+      } catch(e) {}
+    });
+    es.addEventListener('pipeline_cancelled', e => {
+      doneUI();
+      addLog('WARN', '', '❌ 管线已取消');
+      setProgress(0, '已取消');
+    });
+    es.onerror = () => {
+      els.serverStatus.className = 'server-status disconnected';
+      els.serverStatus.innerHTML = '<span class="status-dot"></span>断线重连…';
+    };
+    return es;
   }
 
-  // ===== 初始化 =====
-  function init() {
-    initDom();
-    bindEvents();
-    renderCharacters(state.characters);
-    renderShots(state.shots);
-    updateEmptyState(true);
-    updateProgress(5, 7, 'HunyuanVideo · GPU 排队中');
-    updateGPUInfo();
-
-    // GPU 状态轮询（模拟）
+  // 降级：没有 SSE 就用 WS + 轮询
+  let eventSource = null;
+  function connectBackend() {
+    eventSource = connectSSE();
+    // fallback: 5s 轮询
     setInterval(() => {
-      updateGPUInfo();
-    }, CONFIG.pollInterval);
+      if (state.pipelineId) refreshSnapshot();
+    }, 5000);
+  }
+
+  // ═══ Snapshot Refresh ═══
+  async function refreshSnapshot() {
+    try {
+      const resp = await fetch(API + '/api/v1/pipeline/snapshot/latest', { mode:'cors' });
+      if (!resp.ok) return;
+      const snap = await resp.json();
+      updateAssets(snap);
+      updateOverview(snap);
+      // 如果有合成结果就展示
+      if (snap.compose_agent?.published) {
+        setCardState('compose', 'done', `${snap.compose_agent.published.length}集`);
+      }
+      if (snap.image_agent?.images) {
+        const imgs = snap.image_agent.images;
+        let total = 0;
+        for (const k in imgs) total += Object.keys(imgs[k]).length;
+        setCardState('image', 'done', `${total}张`);
+      }
+      if (snap.character_agent?.characters) {
+        setCardState('character', 'done', `${snap.character_agent.characters.length}角色`);
+      }
+      if (snap.storyboard_agent?.episodes) {
+        const eps = snap.storyboard_agent.episodes;
+        let totalShots = 0;
+        eps.forEach(ep => totalShots += (ep.shots||[]).length);
+        setCardState('storyboard', 'done', `${eps.length}集/${totalShots}镜头`);
+      }
+      if (snap.script_agent?.episodes) {
+        setCardState('script', 'done', `${snap.script_agent.episodes.length}集`);
+      }
+      if (snap.video_agent?.videos) {
+        setCardState('video', 'done', `视频就绪`);
+      }
+    } catch(e) {}
+  }
+
+  // ═══ Assets & Overview ═══
+  function updateAssets(snap) {
+    const ch = snap.character_agent?.characters || [];
+    els.assetChars.innerHTML = ch.map(c => {
+      const img = c.image || (c.asset?.controlnet_ref_path || '');
+      return `<div class="asset-item">${img ? `<img src="${img}">` : '<div style="font-size:20px">👤</div>'}<div class="name">${esc(c.name)}</div><div class="count">${c.reuse_count||1}次</div></div>`;
+    }).join('') || '<div style="font-size:11px;color:var(--text-muted)">暂无角色</div>';
+  }
+
+  function updateOverview(snap) {
+    const sc = snap.script_agent;
+    const sb = snap.storyboard_agent;
+    const episodes = sc?.episodes || sb?.episodes || [];
+    let totalShots = 0;
+    episodes.forEach(ep => totalShots += (ep.shots||[]).length);
+    els.ovEpisodes.textContent = episodes.length || '—';
+    els.ovShots.textContent = totalShots || '—';
+    els.ovStatus.textContent = state.running ? '执行中' : '空闲';
+    if (state.startTime) els.ovTime.textContent = fmt((Date.now()-state.startTime)/1000);
+  }
+
+  // ═══ Pipeline Start ═══
+  async function startPipeline() {
+    const text = els.storyInput.value.trim();
+    if (!text) return;
+
+    state.startTime = Date.now();
+    state.running = true;
+    resetAllCards();
+    closeDetail();
+    setProgress(0, '启动中…');
+    els.generateBtn.disabled = true;
+    els.generateBtn.textContent = '⏳ 生成中…';
+    els.stopBtn.style.display = '';
+
+    try {
+      const resp = await fetch(API + '/api/v1/pipeline/run', {
+        method: 'POST', mode: 'cors',
+        headers: {'Content-Type':'application/json'},
+        body: JSON.stringify({input: text}),
+      });
+      const r = await resp.json();
+      if (r.success) {
+        state.pipelineId = r.pipeline_id;
+        setCardState('script', 'queued', '排队中');
+        addLog('INFO', 'pipeline', `启动成功 ID=${r.pipeline_id}`);
+      } else {
+        throw new Error(r.error || '启动失败');
+      }
+    } catch(e) {
+      doneUI();
+      addLog('ERROR', 'pipeline', '启动失败: '+e.message);
+    }
+  }
+
+  function doneUI() {
+    els.generateBtn.disabled = false;
+    els.generateBtn.textContent = '🚀 开始制作';
+    els.stopBtn.style.display = 'none';
+    state.running = false;
+  }
+
+  async function stopPipeline() {
+    const pid = state.pipelineId;
+    if (pid) {
+      try {
+        await fetch(API + '/api/v1/pipeline/cancel/' + pid, { method:'POST', mode:'cors' });
+        addLog('WARN', 'pipeline', '🛑 停止请求已发送');
+      } catch(e) {
+        addLog('ERROR', 'pipeline', '停止失败: '+e.message);
+      }
+    }
+    doneUI();
+  }
+
+  // ═══ History Drawer ═══
+  async function openHistory() {
+    els.drawerOverlay.classList.add('open');
+    els.historyDrawer.classList.add('open');
+    try {
+      const resp = await fetch(API + '/api/v1/pipeline/history', { mode: 'cors' });
+      const h = await resp.json();
+      const items = h.history || [];
+      els.drawerBody.innerHTML = items.length ? items.map(item => `
+        <div class="history-item">
+          <div class="title">${esc(item.input||'无标题')}</div>
+          <div class="meta">状态: ${item.status||'?'} · ${item.created_at||''}</div>
+          <div class="actions">
+            <button class="btn btn-ghost btn-sm">查看详情</button>
+            ${item.status === 'running' ? '<button class="btn btn-danger btn-sm">停止</button>' : ''}
+          </div>
+        </div>
+      `).join('') : '<div class="empty-state"><div class="icon">📂</div>暂无历史任务</div>';
+    } catch(e) {
+      els.drawerBody.innerHTML = '<div class="empty-state">加载失败</div>';
+    }
+  }
+
+  function closeHistory() {
+    els.drawerOverlay.classList.remove('open');
+    els.historyDrawer.classList.remove('open');
+  }
+
+  // ═══ Tab ═══
+  function bindTabs() {
+    els.tabBtns.forEach(btn => {
+      btn.addEventListener('click', () => {
+        els.tabBtns.forEach(b => b.classList.remove('active'));
+        els.tabContents.forEach(c => c.classList.add('hidden'));
+        btn.classList.add('active');
+        const tab = btn.dataset.tab;
+        const content = document.getElementById('tab-'+tab);
+        if (content) content.classList.remove('hidden');
+      });
+    });
+  }
+
+  // ═══ Init ═══
+  function init() {
+    el();
+    resetAllCards();
+    setProgress(0, '就绪');
+    els.logbar.classList.remove('expanded');
+    els.detailSection.style.display = 'none';
+
+    els.generateBtn.addEventListener('click', startPipeline);
+    els.stopBtn.addEventListener('click', stopPipeline);
+    els.detailClose.addEventListener('click', closeDetail);
+    els.drawerClose.addEventListener('click', closeHistory);
+    els.drawerOverlay.addEventListener('click', closeHistory);
+    els.historyBtn.addEventListener('click', openHistory);
+    els.logHandle.addEventListener('click', () => {
+      els.logbar.classList.toggle('expanded');
+    });
+    bindTabs();
+    bindCardClicks();
+
+    // 连接后端
+    connectBackend();
+    // 加载已有数据
+    setTimeout(refreshSnapshot, 1000);
+    // 心跳
+    setInterval(() => {
+      fetch(API+'/health', {mode:'cors'}).catch(() => {});
+    }, 30000);
   }
 
   document.addEventListener('DOMContentLoaded', init);
