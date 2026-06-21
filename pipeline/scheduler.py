@@ -3,6 +3,7 @@
 import json
 import logging
 import asyncio
+import copy
 from datetime import datetime
 from typing import Dict, List, Optional, Callable, Awaitable, Any
 from pathlib import Path
@@ -217,7 +218,12 @@ class Pipeline:
                         c["name"]: c.get("asset", {})
                         for c in character_data.get("characters", []) or []
                     }
-                    result = await retry_async(agent.run, storyboard_data, char_assets)
+                    # 限帧：只前 1 首集的前 2 个分镜，避免压垮 ComfyUI
+                    sb_light = copy.deepcopy(storyboard_data) if storyboard_data else storyboard_data
+                    if sb_light and sb_light.get("episodes"):
+                        for ep in sb_light["episodes"]:
+                            ep["shots"] = (ep.get("shots") or [])[:2]
+                    result = await retry_async(agent.run, sb_light, char_assets)
                 elif name == "video_agent":
                     result = await retry_async(agent.run,
                         AgentResult(success=True, data={"images": image_data.get("images", {})}),

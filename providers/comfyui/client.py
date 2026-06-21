@@ -245,19 +245,104 @@ class ComfyUIClient:
         model_name: str = "hunyuan_video",
         prompt: str = "",
         duration: int = 5,
-        width: int = 1024,
-        height: int = 576,
+        width: int = 512,
+        height: int = 512,
     ) -> dict:
-        """构建图生视频工作流骨架
+        """构建图生视频工作流 (HunyuanVideo)
 
-        PS: 具体 workflow 取决于 HunyuanVideo 节点的 class_type。
-        这需要实例安装后才能确定精确的节点 ID。
-        当前为占位骨架，实际使用时根据节点实际情况补全。
+        使用远程 GPU 上已验证通过的 Kijai HyVideo 节点套件。
+        配置: 25帧/15步/512x512, fp8_e4m3fn_fast 防 OOM。
         """
-        raise NotImplementedError(
-            "HunyuanVideo 工作流需要在实例上安装后确认节点 class_type。"
-            "请安装 ComfyUI-VideoHelperSuite + Kijai 节点后补全此方法。"
-        )
+        num_frames = max(9, duration * 5)  # ~5fps
+        guided_scale = 6.0
+        return {
+            "load_image": {
+                "class_type": "LoadImage",
+                "inputs": {"image": input_image_path},
+            },
+            "vae_loader": {
+                "class_type": "HyVideoVAELoader",
+                "inputs": {
+                    "model_name": "hunyuan_video_vae_bf16.safetensors",
+                    "precision": "bf16",
+                },
+            },
+            "text_encoder": {
+                "class_type": "DownloadAndLoadHyVideoTextEncoder",
+                "inputs": {
+                    "llm_model": "Kijai/llava-llama-3-8b-text-encoder-tokenizer",
+                    "clip_model": "disabled",
+                    "precision": "bf16",
+                    "apply_final_norm": False,
+                    "hidden_state_skip_layer": 2,
+                    "quantization": "disabled",
+                },
+            },
+            "model_loader": {
+                "class_type": "HyVideoModelLoader",
+                "inputs": {
+                    "model": "HunyuanVideo/hunyuan_video_720_cfgdistill_fp8_e4m3fn.safetensors",
+                    "base_precision": "bf16",
+                    "quantization": "fp8_e4m3fn_fast",
+                    "load_device": "main_device",
+                },
+            },
+            "text_encode": {
+                "class_type": "HyVideoTextEncode",
+                "inputs": {
+                    "text_encoders": ["text_encoder", 0],
+                    "prompt": prompt,
+                    "force_offload": True,
+                    "prompt_template": "video",
+                },
+            },
+            "video_encode": {
+                "class_type": "HyVideoEncode",
+                "inputs": {
+                    "vae": ["vae_loader", 0],
+                    "image": ["load_image", 0],
+                    "enable_vae_tiling": True,
+                    "temporal_tiling_sample_size": 64,
+                    "spatial_tile_sample_min_size": 256,
+                    "auto_tile_size": True,
+                },
+            },
+            "sampler": {
+                "class_type": "HyVideoSampler",
+                "inputs": {
+                    "model": ["model_loader", 0],
+                    "hyvid_embeds": ["text_encode", 0],
+                    "width": width,
+                    "height": height,
+                    "num_frames": num_frames,
+                    "steps": 15,
+                    "embedded_guidance_scale": guided_scale,
+                    "flow_shift": 9.0,
+                    "seed": 42,
+                    "force_offload": True,
+                    "samples": ["video_encode", 0],
+                    "denoise_strength": 0.8,
+                },
+            },
+            "video_decode": {
+                "class_type": "HyVideoDecode",
+                "inputs": {
+                    "vae": ["vae_loader", 0],
+                    "samples": ["sampler", 0],
+                    "enable_vae_tiling": True,
+                    "temporal_tiling_sample_size": 64,
+                    "spatial_tile_sample_min_size": 256,
+                    "auto_tile_size": True,
+                },
+            },
+            "save": {
+                "class_type": "SaveImage",
+                "inputs": {
+                    "filename_prefix": "hyvideo_output",
+                    "images": ["video_decode", 0],
+                },
+            },
+        }
 
     # ── 同步等待执行完成 ──────────────────────
 

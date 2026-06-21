@@ -1,0 +1,28 @@
+version: "3.9"
+
+services:
+  aigc-backend:
+    build: .
+    container_name: aigc-backend
+    ports:
+      - "8888:8888"
+    volumes:
+      # 持久化数据
+      - ./storage:/app/storage
+      - ./storage/checkpoints:/app/storage/checkpoints
+      - ./storage/output:/app/storage/output
+      # 配置文件（引擎选择）
+      - ./config/config.yaml:/app/config/config.yaml
+    environment:
+      - IMAGE_PROVIDER=mock
+      - VIDEO_PROVIDER=mock
+      - LLM_PROVIDER=mock
+      - DEEPSEEK_API_KEY=${DEEPSEEK_API_KEY:-}
+      - COMFYUI_ADDR=${COMFYUI_ADDR:-127.0.0.1}
+      - COMFYUI_PORT=${COMFYUI_PORT:-18188}
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8888/health"]
+      interval: 30s
+      timeout: 5s
+      retries: 3

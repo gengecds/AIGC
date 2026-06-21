@@ -3,6 +3,7 @@
 import logging
 import json
 import copy
+import os
 import requests as _requests
 from typing import Optional
 from pathlib import Path
@@ -89,7 +90,23 @@ class ComfySDImageProvider(ImageProvider):
         import asyncio, time
         import requests
 
-        # 1. 全部提交，不等待
+        # 1. 先去重并上传 ref_image 到 ComfyUI input/
+        uploaded_refs = {}  # local_path -> filename_in_comfyui
+        for shot in shots:
+            ctrl_image = shot.get("controlnet_image") or shot.get("ref_image") or None
+            if ctrl_image and ctrl_image not in uploaded_refs:
+                try:
+                    result = await self.client.upload_image(ctrl_image, subfolder="refs")
+                    remote_name = result.get("name", os.path.basename(ctrl_image))
+                    uploaded_refs[ctrl_image] = remote_name
+                    logger.info(f"[SD] 上传参考图: {ctrl_image} -> {remote_name}")
+                except Exception as e:
+                    logger.warning(f"[SD] 上传参考图失败 {ctrl_image}: {e}")
+                    # 上传失败就跳过 ControlNet
+                    shot["controlnet_type"] = None
+                    shot["ref_image"] = None
+
+        # 2. 全部提交，不等待
         submitted = []
         for shot in shots:
             prompt = shot.get("sd_prompt", "")
@@ -99,12 +116,13 @@ class ComfySDImageProvider(ImageProvider):
             ctrl_image = shot.get("controlnet_image") or shot.get("ref_image") or None
 
             if ctrl_type and ctrl_image:
+                remote_name = uploaded_refs.get(ctrl_image, os.path.basename(ctrl_image))
                 wf = ComfyUIClient.build_controlnet_workflow(
                     ckpt_name=self._ckpt,
                     prompt=prompt,
                     negative_prompt=shot.get("negative_prompt", ""),
                     controlnet_name=ctrl_type,
-                    controlnet_image=ctrl_image,
+                    controlnet_image=remote_name,
                     width=int(shot.get("width", 512)),
                     height=int(shot.get("height", 512)),
                     seed=seed,

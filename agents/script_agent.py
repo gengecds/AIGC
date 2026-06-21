@@ -94,7 +94,13 @@ class ScriptAgent(Agent):
                 raw = raw.split("\n", 1)[1]
                 raw = raw.rsplit("```", 1)[0]
 
-            script = json.loads(raw)
+            # 宽容 JSON 解析：去除尾逗号
+            import re
+            cleaned = re.sub(r',\s*([}\]])', r'\1', raw.strip())
+            try:
+                script = json.loads(cleaned)
+            except json.JSONDecodeError:
+                script = json.loads(raw)
 
             # 基本校验
             if "title" not in script:

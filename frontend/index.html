@@ -8,173 +8,126 @@
 </head>
 <body>
 
-<!-- ═══ 顶栏 ═══ -->
-<header class="topbar">
-  <div class="topbar-left">
-    <div class="logo">
-      <span class="logo-icon">✦</span>
-      <span class="logo-text">漫剧工坊</span>
-      <span class="logo-badge">v0.2</span>
-    </div>
-  </div>
-  <div class="topbar-right">
-    <button class="btn btn-ghost" id="historyBtn" title="历史任务">📂 历史任务</button>
+<!-- ═══ 顶栏（原型 header） ═══ -->
+<header class="header">
+  <div class="logo"><span>AI</span> 漫剧制作平台</div>
+  <div class="actions">
     <span class="server-status" id="serverStatus"><span class="status-dot"></span>GPU 在线</span>
+    <button onclick="toggleDrawer()">📂 历史任务</button>
   </div>
 </header>
 
 <div class="layout">
-  <!-- ═══ 左侧导航 ═══ -->
+  <!-- ═══ 左侧面板 ═══ -->
   <aside class="sidebar">
-    <div class="sidebar-tabs">
-      <button class="tab active" data-tab="assets">🏛️ 资产库</button>
-      <button class="tab" data-tab="overview">📋 任务概览</button>
+    <div class="tab-group">
+      <button class="tab-btn active" onclick="switchTab('asset')">🏛️ 资产库</button>
+      <button class="tab-btn" onclick="switchTab('task')">📋 任务概览</button>
     </div>
-
-    <!-- 资产库 -->
-    <div class="tab-content" id="tab-assets">
-      <h4 style="font-size:11px;color:var(--text-muted);margin-bottom:4px;">角色</h4>
+    <div id="tab-asset">
+      <div style="font-size:11px;color:#555570;margin-bottom:6px">角色定妆照</div>
       <div class="asset-grid" id="assetChars"></div>
-      <h4 style="font-size:11px;color:var(--text-muted);margin:8px 0 4px;">场景</h4>
+      <div style="font-size:11px;color:#555570;margin:10px 0 6px">场景背景</div>
       <div class="asset-grid" id="assetScenes"></div>
     </div>
-
-    <!-- 任务概览 -->
-    <div class="tab-content hidden" id="tab-overview">
-      <div class="overview-item"><span>状态</span><strong id="ovStatus">—</strong></div>
-      <div class="overview-item"><span>集数</span><strong id="ovEpisodes">—</strong></div>
-      <div class="overview-item"><span>镜头</span><strong id="ovShots">—</strong></div>
-      <div class="overview-item"><span>耗时</span><strong id="ovTime">—</strong></div>
-      <div class="overview-item"><span>预估</span><strong id="ovRemain">—</strong></div>
-    </div>
-
-    <!-- 生成参数 -->
-    <div class="sidebar-params">
-      <h4>生成参数</h4>
-      <div class="param-row">
-        <label>分辨率</label>
-        <select id="resSelect"><option>512×512</option><option>768×768</option><option>1024×1024</option></select>
-      </div>
-      <div class="param-row">
-        <label>视频帧数</label>
-        <select id="framesSelect"><option>25 (≈1s)</option><option selected>49 (≈2s)</option><option>97 (≈4s)</option></select>
-      </div>
-      <div class="param-row">
-        <label>采样步数</label>
-        <select id="stepsSelect"><option>12 (快)</option><option selected>15 (均衡)</option><option>25 (质量)</option></select>
+    <div id="tab-task" style="display:none">
+      <div class="task-overview" id="taskOverview">
+        <div class="overview-item"><span>剧名</span><strong id="ovTitle">—</strong></div>
+        <div class="overview-item"><span>集数</span><strong id="ovEpisodes">—</strong></div>
+        <div class="overview-item"><span>分镜</span><strong id="ovShots">—</strong></div>
+        <div class="overview-item"><span>状态</span><strong id="ovStatus" style="color:#6c5ce7">空闲</strong></div>
+        <div class="overview-item"><span>耗时</span><strong id="ovTime">—</strong></div>
+        <div class="overview-item"><span>预估剩余</span><strong id="ovRemain">—</strong></div>
+        <div style="margin-top:10px;font-size:11px;color:#555570">Checkpoint</div>
+        <div id="checkpointList"></div>
       </div>
     </div>
   </aside>
 
-  <!-- ═══ 主内容 ═══ -->
-  <main class="main">
-    <!-- 输入区 -->
-    <section class="input-section">
-      <div class="input-card">
-        <div class="input-header">
-          <h2>📖 故事输入</h2>
-          <span class="hint">50-200 字最佳</span>
-        </div>
-        <div class="input-body">
+  <!-- ═══ 主内容区 ═══ -->
+  <div class="main">
+    <div class="main-scroll" id="mainScroll">
+
+      <!-- 输入区 -->
+      <div class="input-area">
+        <div class="row">
           <textarea id="storyInput" rows="3" placeholder="键入你的故事，如：一个程序员穿越到全是猫娘的世界…">一个程序员穿越到全是猫娘的世界，被当成稀有物种保护起来</textarea>
-          <div class="input-actions">
-            <select class="style-picker" id="stylePicker">
+          <div class="controls">
+            <select class="style-select" id="stylePicker">
               <option>🎨 写实</option>
-              <option>🎨 二次元 · 动漫</option>
-              <option>🎨 水墨 · 国风</option>
-              <option>🎨 赛博朋克</option>
+              <option>二次元</option>
+              <option>水墨风</option>
+              <option>赛博朋克</option>
             </select>
-            <button class="btn btn-primary" id="generateBtn">🚀 开始制作</button>
-            <button class="btn btn-danger" id="stopBtn" style="display:none">■ 停止</button>
+            <button class="start-btn" id="generateBtn">🚀 开始制作</button>
+            <button class="stop-btn" id="stopBtn">⏹ 停止</button>
           </div>
         </div>
       </div>
-    </section>
 
-    <!-- 全局进度条 -->
-    <div class="global-progress" id="globalProgress" style="display:none">
-      <div class="gp-bar"><div class="gp-fill" id="gpFill" style="width:0%"></div></div>
-      <div class="gp-text" id="gpText">等待中…</div>
+      <!-- 7 卡片 -->
+      <div class="cards-row" id="cardRow">
+        <div class="card state-idle" data-agent="script" onclick="selectCard('script')">
+          <div class="icon" style="filter:drop-shadow(0 0 4px rgba(108,92,231,.3))">📝</div>
+          <div class="title">剧本</div>
+          <div class="status-text" id="status-script">空闲</div>
+        </div>
+        <div class="card state-idle" data-agent="storyboard" onclick="selectCard('storyboard')">
+          <div class="icon" style="filter:drop-shadow(0 0 4px rgba(9,132,227,.3))">📋</div>
+          <div class="title">分镜</div>
+          <div class="status-text" id="status-storyboard">空闲</div>
+        </div>
+        <div class="card state-idle" data-agent="character" onclick="selectCard('character')">
+          <div class="icon" style="filter:drop-shadow(0 0 4px rgba(232,67,147,.3))">🎭</div>
+          <div class="title">定妆照</div>
+          <div class="status-text" id="status-character">空闲</div>
+        </div>
+        <div class="card state-idle" data-agent="image" onclick="selectCard('image')">
+          <div class="icon" style="filter:drop-shadow(0 0 4px rgba(0,184,148,.3))">🖼️</div>
+          <div class="title">出图</div>
+          <div class="status-text" id="status-image">空闲</div>
+        </div>
+        <div class="card state-idle" data-agent="video" onclick="selectCard('video')">
+          <div class="icon" style="filter:drop-shadow(0 0 4px rgba(253,203,110,.3))">🎬</div>
+          <div class="title">视频</div>
+          <div class="status-text" id="status-video">空闲</div>
+        </div>
+        <div class="card state-idle" data-agent="subtitle" onclick="selectCard('subtitle')">
+          <div class="icon" style="filter:drop-shadow(0 0 4px rgba(99,110,114,.3))">📄</div>
+          <div class="title">字幕</div>
+          <div class="status-text" id="status-subtitle">空闲</div>
+        </div>
+        <div class="card state-idle" data-agent="compose" onclick="selectCard('compose')">
+          <div class="icon" style="filter:drop-shadow(0 0 4px rgba(214,48,49,.3))">📦</div>
+          <div class="title">合成</div>
+          <div class="status-text" id="status-compose">空闲</div>
+        </div>
+      </div>
+
+      <!-- 进度条 -->
+      <div class="progress-bar" id="progressBar"><div class="fill" id="progressFill" style="width:0%"></div></div>
+      <div class="progress-text">
+        <span id="progressText">空闲</span>
+        <span id="progressPct">0% (0/7 Agent)</span>
+      </div>
+
+      <!-- 详情区（动态渲染） -->
+      <div class="detail-area" id="detailArea"><div class="placeholder">👈 点击上方卡片查看详情</div></div>
+
+      <!-- 日志区 -->
+      <div class="log-header"><span>📋 日志 <span id="logCount">0</span></span><button onclick="toggleLog()">收起 ▾</button></div>
+      <div class="log-area" id="logArea"></div>
+
     </div>
-
-    <!-- 7 卡片全链路 -->
-    <section class="cards-section" id="cardsSection">
-      <div class="chain-cards">
-        <div class="chain-card" data-agent="script" data-step="1">
-          <div class="card-icon purple">📝</div>
-          <div class="card-title">剧本</div>
-          <div class="card-status" id="status-script">空闲</div>
-          <div class="card-meta" id="meta-script"></div>
-        </div>
-        <div class="chain-card" data-agent="storyboard" data-step="2">
-          <div class="card-icon blue">📋</div>
-          <div class="card-title">分镜</div>
-          <div class="card-status" id="status-storyboard">空闲</div>
-          <div class="card-meta" id="meta-storyboard"></div>
-        </div>
-        <div class="chain-card" data-agent="character" data-step="3">
-          <div class="card-icon pink">🎭</div>
-          <div class="card-title">定妆照</div>
-          <div class="card-status" id="status-character">空闲</div>
-          <div class="card-meta" id="meta-character"></div>
-        </div>
-        <div class="chain-card" data-agent="image" data-step="4">
-          <div class="card-icon green">🖼️</div>
-          <div class="card-title">出图</div>
-          <div class="card-status" id="status-image">空闲</div>
-          <div class="card-meta" id="meta-image"></div>
-        </div>
-        <div class="chain-card" data-agent="video" data-step="5">
-          <div class="card-icon gold">🎬</div>
-          <div class="card-title">视频</div>
-          <div class="card-status" id="status-video">空闲</div>
-          <div class="card-meta" id="meta-video"></div>
-        </div>
-        <div class="chain-card" data-agent="subtitle" data-step="6">
-          <div class="card-icon gray">📄</div>
-          <div class="card-title">字幕</div>
-          <div class="card-status" id="status-subtitle">空闲</div>
-          <div class="card-meta" id="meta-subtitle"></div>
-        </div>
-        <div class="chain-card" data-agent="compose" data-step="7">
-          <div class="card-icon red">📦</div>
-          <div class="card-title">合成</div>
-          <div class="card-status" id="status-compose">空闲</div>
-          <div class="card-meta" id="meta-compose"></div>
-        </div>
-      </div>
-    </section>
-
-    <!-- 详情区（点击卡片后展示） -->
-    <section class="detail-section" id="detailSection" style="display:none">
-      <div class="detail-panel" id="detailPanel">
-        <div class="detail-header">
-          <h3 id="detailTitle">详情</h3>
-          <button class="btn btn-ghost btn-sm" id="detailClose">✕</button>
-        </div>
-        <div class="detail-body" id="detailBody"></div>
-        <div class="detail-actions" id="detailActions" style="display:none"></div>
-      </div>
-    </section>
-  </main>
+  </div>
 </div>
 
-<!-- ═══ 底部日志 ═══ -->
-<footer class="logbar" id="logbar">
-  <div class="logbar-handle" id="logHandle">📋 日志 <span id="logCount">0</span> <span class="log-arrow">▾</span></div>
-  <div class="logbar-body" id="logBody">
-    <div class="log-list" id="logList"></div>
-  </div>
-</footer>
-
-<!-- ═══ 历史任务抽屉 ═══ -->
-<div class="drawer-overlay" id="drawerOverlay"></div>
+<!-- 历史任务抽屉 -->
+<div class="drawer-overlay" id="drawerOverlay" onclick="toggleDrawer()"></div>
 <div class="drawer" id="historyDrawer">
-  <div class="drawer-header">
-    <h3>📂 历史任务</h3>
-    <button class="btn btn-ghost" id="drawerClose">✕</button>
-  </div>
-  <div class="drawer-body" id="drawerBody"></div>
+  <button class="close-btn" onclick="toggleDrawer()">✕</button>
+  <h3>📂 历史任务</h3>
+  <div id="historyList"></div>
 </div>
 
 <script src="app.js"></script>

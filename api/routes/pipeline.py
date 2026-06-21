@@ -320,17 +320,22 @@ async def _execute(pipeline_id: str, story_id: int, user_input: str, resume: boo
         from providers.comfyui.client import ComfyUIClient
         comfy_client = None
         if use_comfyui or use_comfyui_video:
-            comfy_host = cfg.get("comfyui", {}).get("host", "127.0.0.1")
-            comfy_port = cfg.get("comfyui", {}).get("port", 8188)
+            comfy_host = cfg.get("comfyui", {}).get("server_addr", "127.0.0.1")
+            comfy_port = cfg.get("comfyui", {}).get("server_port", 18188)
             comfy_timeout = cfg.get("comfyui", {}).get("timeout", 600)
             comfy_client = ComfyUIClient(server_addr=comfy_host, server_port=comfy_port)
 
         from agents.video_compose_agent import VideoComposeAgent
         from agents.publish_agent import PublishAgent
 
+        # 根据 config 选择 LLM provider
+        use_mock_llm = engine.get("llm_provider", "deepseek") == "mock"
+        from providers.mock_provider import MockLLMProvider
+        mock_llm = MockLLMProvider() if use_mock_llm else None
+
         agents = [
-            ScriptAgent(),
-            StoryboardAgent(),
+            ScriptAgent(llm_provider=mock_llm if use_mock_llm else "deepseek"),
+            StoryboardAgent(llm_provider=mock_llm if use_mock_llm else "deepseek"),
             CharacterDesignAgent(use_comfyui=use_comfyui, comfy_client=comfy_client),
             ImageGenAgent(use_comfyui=use_comfyui, comfy_client=comfy_client),
             VideoGenAgent(use_comfyui=use_comfyui_video, comfy_client=comfy_client),

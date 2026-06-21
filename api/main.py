@@ -5,6 +5,9 @@ import yaml
 import logging
 from pathlib import Path
 from contextlib import asynccontextmanager
+from dotenv import load_dotenv
+
+load_dotenv()  # 加载 .env 到环境变量
 
 from fastapi import FastAPI
 from fastapi.staticfiles import StaticFiles

@@ -145,7 +145,7 @@ class VideoGenAgent(Agent):
             proc = await asyncio.create_subprocess_shell(
                 ssh_cmd, stdout=sp.PIPE, stderr=sp.PIPE
             )
-            _, stderr = await proc.communicate(timeout=120)
+            _, stderr = await asyncio.wait_for(proc.communicate(), timeout=120)
             if proc.returncode != 0:
                 err = stderr.decode()[-300:] if stderr else "unknown"
                 logger.warning(f"[VideoGenAgent] GPU 合成失败: {err}")

@@ -1,0 +1,182 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>AI 漫剧制作平台</title>
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+
+<!-- ═══ 顶栏 ═══ -->
+<header class="topbar">
+  <div class="topbar-left">
+    <div class="logo">
+      <span class="logo-icon">✦</span>
+      <span class="logo-text">漫剧工坊</span>
+      <span class="logo-badge">v0.2</span>
+    </div>
+  </div>
+  <div class="topbar-right">
+    <button class="btn btn-ghost" id="historyBtn" title="历史任务">📂 历史任务</button>
+    <span class="server-status" id="serverStatus"><span class="status-dot"></span>GPU 在线</span>
+  </div>
+</header>
+
+<div class="layout">
+  <!-- ═══ 左侧导航 ═══ -->
+  <aside class="sidebar">
+    <div class="sidebar-tabs">
+      <button class="tab active" data-tab="assets">🏛️ 资产库</button>
+      <button class="tab" data-tab="overview">📋 任务概览</button>
+    </div>
+
+    <!-- 资产库 -->
+    <div class="tab-content" id="tab-assets">
+      <h4 style="font-size:11px;color:var(--text-muted);margin-bottom:4px;">角色</h4>
+      <div class="asset-grid" id="assetChars"></div>
+      <h4 style="font-size:11px;color:var(--text-muted);margin:8px 0 4px;">场景</h4>
+      <div class="asset-grid" id="assetScenes"></div>
+    </div>
+
+    <!-- 任务概览 -->
+    <div class="tab-content hidden" id="tab-overview">
+      <div class="overview-item"><span>状态</span><strong id="ovStatus">—</strong></div>
+      <div class="overview-item"><span>集数</span><strong id="ovEpisodes">—</strong></div>
+      <div class="overview-item"><span>镜头</span><strong id="ovShots">—</strong></div>
+      <div class="overview-item"><span>耗时</span><strong id="ovTime">—</strong></div>
+      <div class="overview-item"><span>预估</span><strong id="ovRemain">—</strong></div>
+    </div>
+
+    <!-- 生成参数 -->
+    <div class="sidebar-params">
+      <h4>生成参数</h4>
+      <div class="param-row">
+        <label>分辨率</label>
+        <select id="resSelect"><option>512×512</option><option>768×768</option><option>1024×1024</option></select>
+      </div>
+      <div class="param-row">
+        <label>视频帧数</label>
+        <select id="framesSelect"><option>25 (≈1s)</option><option selected>49 (≈2s)</option><option>97 (≈4s)</option></select>
+      </div>
+      <div class="param-row">
+        <label>采样步数</label>
+        <select id="stepsSelect"><option>12 (快)</option><option selected>15 (均衡)</option><option>25 (质量)</option></select>
+      </div>
+    </div>
+  </aside>
+
+  <!-- ═══ 主内容 ═══ -->
+  <main class="main">
+    <!-- 输入区 -->
+    <section class="input-section">
+      <div class="input-card">
+        <div class="input-header">
+          <h2>📖 故事输入</h2>
+          <span class="hint">50-200 字最佳</span>
+        </div>
+        <div class="input-body">
+          <textarea id="storyInput" rows="3" placeholder="键入你的故事，如：一个程序员穿越到全是猫娘的世界…">一个程序员穿越到全是猫娘的世界，被当成稀有物种保护起来</textarea>
+          <div class="input-actions">
+            <select class="style-picker" id="stylePicker">
+              <option>🎨 写实</option>
+              <option>🎨 二次元 · 动漫</option>
+              <option>🎨 水墨 · 国风</option>
+              <option>🎨 赛博朋克</option>
+            </select>
+            <button class="btn btn-primary" id="generateBtn">🚀 开始制作</button>
+            <button class="btn btn-danger" id="stopBtn" style="display:none">■ 停止</button>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- 全局进度条 -->
+    <div class="global-progress" id="globalProgress" style="display:none">
+      <div class="gp-bar"><div class="gp-fill" id="gpFill" style="width:0%"></div></div>
+      <div class="gp-text" id="gpText">等待中…</div>
+    </div>
+
+    <!-- 7 卡片全链路 -->
+    <section class="cards-section" id="cardsSection">
+      <div class="chain-cards">
+        <div class="chain-card" data-agent="script" data-step="1">
+          <div class="card-icon purple">📝</div>
+          <div class="card-title">剧本</div>
+          <div class="card-status" id="status-script">空闲</div>
+          <div class="card-meta" id="meta-script"></div>
+        </div>
+        <div class="chain-card" data-agent="storyboard" data-step="2">
+          <div class="card-icon blue">📋</div>
+          <div class="card-title">分镜</div>
+          <div class="card-status" id="status-storyboard">空闲</div>
+          <div class="card-meta" id="meta-storyboard"></div>
+        </div>
+        <div class="chain-card" data-agent="character" data-step="3">
+          <div class="card-icon pink">🎭</div>
+          <div class="card-title">定妆照</div>
+          <div class="card-status" id="status-character">空闲</div>
+          <div class="card-meta" id="meta-character"></div>
+        </div>
+        <div class="chain-card" data-agent="image" data-step="4">
+          <div class="card-icon green">🖼️</div>
+          <div class="card-title">出图</div>
+          <div class="card-status" id="status-image">空闲</div>
+          <div class="card-meta" id="meta-image"></div>
+        </div>
+        <div class="chain-card" data-agent="video" data-step="5">
+          <div class="card-icon gold">🎬</div>
+          <div class="card-title">视频</div>
+          <div class="card-status" id="status-video">空闲</div>
+          <div class="card-meta" id="meta-video"></div>
+        </div>
+        <div class="chain-card" data-agent="subtitle" data-step="6">
+          <div class="card-icon gray">📄</div>
+          <div class="card-title">字幕</div>
+          <div class="card-status" id="status-subtitle">空闲</div>
+          <div class="card-meta" id="meta-subtitle"></div>
+        </div>
+        <div class="chain-card" data-agent="compose" data-step="7">
+          <div class="card-icon red">📦</div>
+          <div class="card-title">合成</div>
+          <div class="card-status" id="status-compose">空闲</div>
+          <div class="card-meta" id="meta-compose"></div>
+        </div>
+      </div>
+    </section>
+
+    <!-- 详情区（点击卡片后展示） -->
+    <section class="detail-section" id="detailSection" style="display:none">
+      <div class="detail-panel" id="detailPanel">
+        <div class="detail-header">
+          <h3 id="detailTitle">详情</h3>
+          <button class="btn btn-ghost btn-sm" id="detailClose">✕</button>
+        </div>
+        <div class="detail-body" id="detailBody"></div>
+        <div class="detail-actions" id="detailActions" style="display:none"></div>
+      </div>
+    </section>
+  </main>
+</div>
+
+<!-- ═══ 底部日志 ═══ -->
+<footer class="logbar" id="logbar">
+  <div class="logbar-handle" id="logHandle">📋 日志 <span id="logCount">0</span> <span class="log-arrow">▾</span></div>
+  <div class="logbar-body" id="logBody">
+    <div class="log-list" id="logList"></div>
+  </div>
+</footer>
+
+<!-- ═══ 历史任务抽屉 ═══ -->
+<div class="drawer-overlay" id="drawerOverlay"></div>
+<div class="drawer" id="historyDrawer">
+  <div class="drawer-header">
+    <h3>📂 历史任务</h3>
+    <button class="btn btn-ghost" id="drawerClose">✕</button>
+  </div>
+  <div class="drawer-body" id="drawerBody"></div>
+</div>
+
+<script src="app.js"></script>
+</body>
+</html>
