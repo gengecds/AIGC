@@ -19,9 +19,13 @@ logger = logging.getLogger("ai-drama")
 # ── 配置加载 ────────────────────────────
 
 def load_config() -> dict:
-    config_path = Path(__file__).parent.parent / "config" / "config.yaml"
-    with open(config_path, "r", encoding="utf-8") as f:
-        return yaml.safe_load(f)
+    """加载配置（通过配置中心）"""
+    from config.settings import settings
+    return {
+        "server": {"host": settings.frontend.host, "port": settings.frontend.port},
+        "storage": {"checkpoint_dir": str(settings.storage.checkpoint_dir)},
+        "pipeline": {"max_retries": int(settings.pipeline.max_retries)},
+    }
 
 
 # ── 生命周期 ────────────────────────────
@@ -30,11 +34,7 @@ def load_config() -> dict:
 async def lifespan(app: FastAPI):
     cfg = load_config()
     app.state.config = cfg
-    # 初始化数据库
-    db_url = cfg["database"]["url"]
-    os.makedirs(Path(db_url.replace("sqlite:///", "")).parent, exist_ok=True)
-    get_engine(db_url)
-    logger.info("数据库已初始化")
+    logger.info("应用启动中...")
     # 确保存储目录存在
     for d in ["storage/output", "storage/checkpoints"]:
         os.makedirs(d, exist_ok=True)
