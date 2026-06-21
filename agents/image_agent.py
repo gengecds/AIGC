@@ -18,11 +18,11 @@ class ImageGenAgent(Agent):
 
     name = "image_agent"
 
-    def __init__(self, use_comfyui: bool = False):
+    def __init__(self, use_comfyui: bool = False, comfy_client=None):
         super().__init__(name="image_agent")
         if use_comfyui:
             from providers.comfyui_provider import ComfySDImageProvider
-            self.image_provider = ComfySDImageProvider()
+            self.image_provider = ComfySDImageProvider(client=comfy_client)
         else:
             from providers.mock_provider import MockImageProvider
             self.image_provider = MockImageProvider()
@@ -53,17 +53,25 @@ class ImageGenAgent(Agent):
                     ) if character_assets else None,
                 })
 
-            images = await self.image_provider.batch_generate(shot_data)
-            all_results[f"ep_{ep_num}"] = images
+            # batch_generate 返回 list[dict]，转为 {shot_id: file_info} 格式
+            image_list = await self.image_provider.batch_generate(shot_data)
+            # image_list: [{'filename':...,'subfolder':...,'type':...,'prompt_id':...}]
+            # 映射为 shot_id → file_info
+            ep_images = {}
+            for i, img_info in enumerate(image_list):
+                sid = shot_data[i].get("shot_id", str(i))
+                ep_images[sid] = img_info
+            all_results[f"ep_{ep_num}"] = ep_images
 
+        total = sum(len(v) for v in all_results.values())
         result = AgentResult(
             success=True,
             data={"images": all_results},
             metadata={
                 "agent": self.name,
                 "timestamp": datetime.utcnow().isoformat(),
-                "total_images": sum(len(v) for v in all_results.values()),
+                "total_images": total,
             },
         )
-        logger.info(f"[ImageGenAgent] 完成: {result.metadata['total_images']}张图")
+        logger.info(f"[ImageGenAgent] 完成: {total}张图")
         return result

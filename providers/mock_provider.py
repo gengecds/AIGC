@@ -31,17 +31,16 @@ class MockImageProvider:
         logger.info(f"[Mock] 出图: {fake_path}")
         return str(fake_path)
 
-    async def batch_generate(self, shots: list[dict]) -> dict[str, str]:
-        """批量出图"""
-        results = {}
-        for shot in shots:
-            path = await self.generate(
+    async def batch_generate(self, shots: list[dict]) -> list[str]:
+        """并行批量出图，返回路径列表"""
+        import asyncio
+        async def gen_one(shot):
+            return await self.generate(
                 prompt=shot.get("sd_prompt", ""),
                 ref_image=shot.get("ref_image"),
                 seed=shot.get("seed", random.randint(0, 2**31)),
             )
-            results[shot["shot_id"]] = path
-        return results
+        return await asyncio.gather(*[gen_one(s) for s in shots])
 
 
 class MockVideoProvider:
@@ -62,14 +61,13 @@ class MockVideoProvider:
         logger.info(f"[Mock] 视频: {fake_path}")
         return str(fake_path)
 
-    async def batch_generate(self, images: list[dict]) -> dict[str, str]:
-        """批量图生视频"""
-        results = {}
-        for img in images:
-            path = await self.generate(
-                input_image=img["image_path"],
+    async def batch_generate(self, images: list[dict]) -> list[str]:
+        """并行批量图生视频"""
+        import asyncio
+        async def gen_one(img):
+            return await self.generate(
+                input_image=img.get("image_path", ""),
                 prompt=img.get("motion", ""),
                 duration=img.get("duration", 5),
             )
-            results[img["shot_id"]] = path
-        return results
+        return await asyncio.gather(*[gen_one(img) for img in images])

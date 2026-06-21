@@ -1,28 +1,37 @@
-# ── API Key ──
-.env
+# API keys
+pipeline/test_full.py
+pipeline/test_real_full.py
 
-# ── Python 缓存 ──
+# Storage / outputs
+storage/
+*.png
+*.webm
+*.mp4
+*.srt
+
+# ComfyUI workflows (可能含路径信息)
+workflows/
+
+# Checkpoints
+**/checkpoints_real/
+**/checkpoints/
+
+# IDE
+.idea/
+.vscode/
+*.swp
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Python
 __pycache__/
 *.pyc
-*.pyo
 *.egg-info/
 dist/
 build/
 
-# ── 模型文件（太大不入git） ──
-storage/models/
-storage/output/
-storage/checkpoints/
-storage/workflows/
-storage/outputs/
-storage/ai_drama.db
-
-# ── macOS ──
-.DS_Store
-*.swp
-*.swo
-
-# ── IDE ──
-.idea/
-.vscode/
-*.iml
+# Secrets
+.env
+*.env

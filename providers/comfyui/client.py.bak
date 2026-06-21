@@ -16,7 +16,6 @@ from pathlib import Path
 from urllib.parse import urljoin, urlparse
 
 import httpx
-import requests
 import websockets
 
 logger = logging.getLogger(__name__)
@@ -191,8 +190,8 @@ class ComfyUIClient:
 
         for _ in range(self.timeout):
             queue = await self.get_queue()
-            running_ids = [j[1] if isinstance(j, list) else j.get("prompt_id", "") for j in queue.get("queue_running", [])]
-            pending_ids = [j[1] if isinstance(j, list) else j.get("prompt_id", "") for j in queue.get("queue_pending", [])]
+            running_ids = [j["prompt_id"] for j in queue.get("queue_running", [])]
+            pending_ids = [j["prompt_id"] for j in queue.get("queue_pending", [])]
 
             if prompt_id not in running_ids and prompt_id not in pending_ids:
                 # 执行完成，获取结果
@@ -219,92 +218,5 @@ class ComfyUIClient:
             "error": f"超时 (>{self.timeout}s)",
         }
 
-    # ── 上传图片 ──────────────────────────────
-
-    async def upload_image(self, image_path: str, subfolder: str = "") -> dict:
-        """上传图片到 ComfyUI input 目录"""
-        path = Path(image_path)
-        if not path.exists():
-            # 可能已在远端，尝试通过 SSH 复制
-            raise FileNotFoundError(f"本地图片不存在: {image_path}")
-        files = {"image": (path.name, path.read_bytes(), "image/png")}
-        data = {"subfolder": subfolder, "type": "input", "overwrite": "true"}
-        resp = requests.post(f"{self.base_url}/upload/image", files=files, data=data)
-        resp.raise_for_status()
-        return resp.json()
-
     async def close(self):
         await self._http.aclose()
-
-
-    # ── 同步入口（兼容pipeline ─────────────────────
-
-    @staticmethod
-    def txt2img_sync(
-        host: str = "127.0.0.1",
-        port: int = 8188,
-        ckpt_name: str = "Realistic-Vision-V5.1.safetensors",
-        prompt: str = "a cute cat",
-        negative_prompt: str = "",
-        width: int = 512,
-        height: int = 512,
-        seed: int = 42,
-        steps: int = 10,
-        cfg: float = 7.0,
-        sampler: str = "euler",
-        scheduler: str = "normal",
-        timeout: int = 300,
-    ) -> dict:
-        """同步文生图 - 不依赖asyncio，直接requests"""
-        import json, time
-        
-        url = f"http://{host}:{port}"
-        
-        wf = {
-            "1": {"class_type":"CheckpointLoaderSimple","inputs":{"ckpt_name": ckpt_name}},
-            "2": {"class_type":"EmptyLatentImage","inputs":{"width": width, "height": height, "batch_size": 1}},
-            "3": {"class_type":"CLIPTextEncode","inputs":{"text": prompt, "clip": ["1", 1]}},
-            "4": {"class_type":"CLIPTextEncode","inputs":{"text": negative_prompt, "clip": ["1", 1]}},
-            "5": {"class_type":"KSampler","inputs":{"seed": seed, "steps": steps, "cfg": cfg, "sampler_name": sampler, "scheduler": scheduler, "denoise": 1.0, "model": ["1", 0], "positive": ["3", 0], "negative": ["4", 0], "latent_image": ["2", 0]}},
-            "6": {"class_type":"VAEDecode","inputs":{"samples": ["5", 0], "vae": ["1", 2]}},
-            "7": {"class_type":"SaveImage","inputs":{"filename_prefix": "output", "images": ["6", 0]}}
-        }
-        
-        r = requests.post(f"{url}/prompt", json={"prompt": wf, "client_id": "pipeline"})
-        if r.status_code != 200:
-            return {"success": False, "error": f"Queue failed: {r.text}"}
-        
-        pid = r.json().get("prompt_id","")
-        if not pid:
-            return {"success": False, "error": f"No prompt_id: {r.json()}"}
-        
-        # 轮询
-        for i in range(timeout):
-            time.sleep(2)
-            q = requests.get(f"{url}/queue").json()
-            if not q["queue_running"] and not q["queue_pending"]:
-                break
-        
-        h = requests.get(f"{url}/history/{pid}").json()
-        if pid not in h:
-            return {"success": False, "prompt_id": pid, "error": "history not found"}
-        
-        info = h[pid]
-        if not info.get("status",{}).get("completed",False):
-            err_msg = "unknown error"
-            for mt, md in info.get("status",{}).get("messages",[]):
-                if mt == "execution_error":
-                    err_msg = md.get("exception_message", err_msg)
-            return {"success": False, "prompt_id": pid, "error": err_msg}
-        
-        # 下载生成的图片
-        images = []
-        for nid, out in info.get("outputs",{}).items():
-            for img in out.get("images",[]):
-                fn = img["filename"]
-                sub = img.get("subfolder","")
-                r2 = requests.get(f"{url}/view", params={"filename": fn, "subfolder": sub, "type": img.get("type","output")})
-                if r2.status_code == 200:
-                    images.append({"filename": fn, "data": r2.content, "size_kb": len(r2.content)/1024})
-        
-        return {"success": True, "prompt_id": pid, "images": images}

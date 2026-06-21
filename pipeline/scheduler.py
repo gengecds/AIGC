@@ -125,8 +125,10 @@ class Pipeline:
                 }
                 result = await agent.run(storyboard_data, char_assets)
             elif name == "video_agent":
-                result = await agent.run(AgentResult(success=True, data={"images": image_data.get("images", {})}),
-                                          storyboard_data)
+                result = await agent.run(
+                    AgentResult(success=True, data={"images": image_data.get("images", {})}),
+                    storyboard_data,
+                )
             elif name == "subtitle_agent":
                 result = await agent.run(script_data, storyboard_data)
             elif name == "compose_agent":
@@ -134,6 +136,7 @@ class Pipeline:
                     AgentResult(success=True, data={"videos": video_data.get("videos", {})}),
                     AgentResult(success=True, data={"subtitles": subtitle_data.get("subtitles", [])}),
                 )
+
 
             if result is None or not result.success:
                 error = result.error if result else "Agent 未返回结果"

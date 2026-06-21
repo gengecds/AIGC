@@ -1,0 +1,247 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>AI 漫剧制作平台 — 预览</title>
+<link rel="stylesheet" href="style.css">
+<style>
+/* 视频播放器增强 */
+.video-player video {
+  width: 100%;
+  height: 100%;
+  object-fit: contain;
+  background: #000;
+}
+.video-card {
+  position: relative;
+}
+.video-duration {
+  position: absolute;
+  bottom: 38px;
+  right: 8px;
+  background: rgba(0,0,0,.75);
+  color: #fff;
+  font-size: 11px;
+  padding: 1px 5px;
+  border-radius: 3px;
+}
+
+/* sd出图小画廊 */
+.gallery-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(100px, 1fr));
+  gap: 6px;
+  padding: 12px 16px;
+}
+.gallery-thumb {
+  aspect-ratio: 1;
+  background: var(--bg-elevated);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  overflow: hidden;
+  cursor: pointer;
+  transition: var(--transition);
+}
+.gallery-thumb:hover {
+  border-color: var(--accent);
+  transform: scale(1.05);
+}
+.gallery-thumb img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+
+/* 分镜图 */
+.shot-image {
+  background: linear-gradient(135deg, #1a1a24, #2a2a3a);
+}
+.shot-image img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+
+/* 统计卡片 */
+.stats-row {
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  gap: 10px;
+  margin-bottom: 16px;
+}
+.stat-card {
+  background: var(--bg-card);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
+  padding: 16px;
+  text-align: center;
+}
+.stat-card .num {
+  font-size: 28px;
+  font-weight: 700;
+  background: var(--accent-gradient);
+  -webkit-background-clip: text;
+  -webkit-text-fill-color: transparent;
+}
+.stat-card .label {
+  font-size: 12px;
+  color: var(--text-muted);
+  margin-top: 4px;
+}
+</style>
+</head>
+<body>
+<div id="app">
+  <header class="topbar">
+    <div class="topbar-left">
+      <div class="logo">
+        <span class="logo-icon">✦</span>
+        <span class="logo-text">漫剧工坊</span>
+        <span class="logo-badge">v0.2</span>
+      </div>
+      <nav class="nav-links">
+        <a class="active" href="#">成果预览</a>
+      </nav>
+    </div>
+    <div class="topbar-right">
+      <span class="server-status">
+        <span class="status-dot"></span>GPU 任务完成
+      </span>
+    </div>
+  </header>
+
+  <div class="layout">
+    <aside class="sidebar">
+      <div class="sidebar-header">
+        <h3>处理结果</h3>
+        <span class="badge">全链路完成</span>
+      </div>
+      <div class="steps">
+        <div class="step completed"><div class="step-indicator">✓</div><div class="step-body"><div class="step-title">✍ 剧本生成</div><div class="step-desc">DeepSeek 驱动</div></div></div>
+        <div class="step completed"><div class="step-indicator">✓</div><div class="step-body"><div class="step-title">🎬 分镜拆解</div><div class="step-desc">6 场景</div></div></div>
+        <div class="step completed"><div class="step-indicator">✓</div><div class="step-body"><div class="step-title">👤 角色定妆</div><div class="step-desc">4 角色</div></div></div>
+        <div class="step completed"><div class="step-indicator">✓</div><div class="step-body"><div class="step-title">🖼 场景出图</div><div class="step-desc">SD × 6</div></div></div>
+        <div class="step completed"><div class="step-indicator">✓</div><div class="step-body"><div class="step-title">🎥 图生视频</div><div class="step-desc">HyVideo × 6</div></div></div>
+        <div class="step completed"><div class="step-indicator">✓</div><div class="step-body"><div class="step-title">💬 字幕生成</div><div class="step-desc">SRT 就绪</div></div></div>
+        <div class="step pending"><div class="step-indicator">7</div><div class="step-body"><div class="step-title">🎞 合成输出</div><div class="step-desc">待完成</div></div></div>
+      </div>
+    </aside>
+
+    <main class="main">
+      <div class="preview-section" style="padding:20px 24px">
+
+        <!-- 统计 -->
+        <div class="stats-row">
+          <div class="stat-card"><div class="num">6</div><div class="label">视频片段</div></div>
+          <div class="stat-card"><div class="num">150</div><div class="label">生成帧数</div></div>
+          <div class="stat-card"><div class="num">6</div><div class="label">场景出图</div></div>
+          <div class="stat-card"><div class="num">4</div><div class="label">角色</div></div>
+        </div>
+
+        <!-- 角色 -->
+        <div class="panel">
+          <div class="panel-header"><h3>👤 角色定妆</h3><span class="badge">4 个角色</span></div>
+          <div class="character-grid">
+            <div class="char-card">
+              <div class="char-avatar"><img src="../storage/video_frames/test_frame.png" alt="主角"></div>
+              <div class="char-name">主角·程序</div>
+              <div class="char-role">穿越的程序员</div>
+            </div>
+            <div class="char-card">
+              <div class="char-avatar" style="background:linear-gradient(135deg,#2a1a3a,#4a2a5a)">🐱</div>
+              <div class="char-name">小白</div>
+              <div class="char-role">猫娘向导</div>
+            </div>
+            <div class="char-card">
+              <div class="char-avatar" style="background:linear-gradient(135deg,#3a2a1a,#5a3a2a)">🧓</div>
+              <div class="char-name">橘长老</div>
+              <div class="char-role">猫娘长老</div>
+            </div>
+            <div class="char-card">
+              <div class="char-avatar" style="background:linear-gradient(135deg,#1a1a2a,#2a1a3a)">🐾</div>
+              <div class="char-name">黑爪</div>
+              <div class="char-role">反派猫娘</div>
+            </div>
+          </div>
+        </div>
+
+        <!-- 视频列表 -->
+        <div class="panel">
+          <div class="panel-header"><h3>🎥 图生视频（HunyuanVideo）</h3><span class="badge">6 段 × 25 帧</span></div>
+          <div class="video-grid">
+            <div class="video-card">
+              <div class="video-player"><video controls preload="metadata"><source src="../storage/videos/video_0.webm" type="video/webm"></video></div>
+              <div class="video-info"><div class="video-num">镜头 #1 · 开场</div></div>
+              <div class="video-duration">~1s</div>
+            </div>
+            <div class="video-card">
+              <div class="video-player"><video controls preload="metadata"><source src="../storage/videos/video_1.webm" type="video/webm"></video></div>
+              <div class="video-info"><div class="video-num">镜头 #2 · 穿越</div></div>
+              <div class="video-duration">~1s</div>
+            </div>
+            <div class="video-card">
+              <div class="video-player"><video controls preload="metadata"><source src="../storage/videos/video_2.webm" type="video/webm"></video></div>
+              <div class="video-info"><div class="video-num">镜头 #3 · 初遇</div></div>
+              <div class="video-duration">~1s</div>
+            </div>
+            <div class="video-card">
+              <div class="video-player"><video controls preload="metadata"><source src="../storage/videos/video_3.webm" type="video/webm"></video></div>
+              <div class="video-info"><div class="video-num">镜头 #4 · 震惊</div></div>
+              <div class="video-duration">~1s</div>
+            </div>
+            <div class="video-card">
+              <div class="video-player"><video controls preload="metadata"><source src="../storage/videos/video_4.webm" type="video/webm"></video></div>
+              <div class="video-info"><div class="video-num">镜头 #5 · 引荐</div></div>
+              <div class="video-duration">~1s</div>
+            </div>
+            <div class="video-card">
+              <div class="video-player"><video controls preload="metadata"><source src="../storage/videos/video_5.webm" type="video/webm"></video></div>
+              <div class="video-info"><div class="video-num">镜头 #6 · 真相</div></div>
+              <div class="video-duration">~1s</div>
+            </div>
+          </div>
+        </div>
+
+        <!-- SD出图 -->
+        <div class="panel">
+          <div class="panel-header"><h3>🖼 SD 出图</h3><span class="badge">ComfyUI + RealisticVision</span></div>
+          <div class="gallery-grid" id="sdGallery">
+            <div class="gallery-thumb"><img src="../storage/video_frames/test_frame.png" alt=""></div>
+            <div class="gallery-thumb" style="background:linear-gradient(135deg,#2a3a1a,#4a5a2a)">🏙</div>
+            <div class="gallery-thumb" style="background:linear-gradient(135deg,#1a1a3a,#2a2a5a)">🌃</div>
+            <div class="gallery-thumb" style="background:linear-gradient(135deg,#3a1a1a,#5a2a2a)">🔥</div>
+            <div class="gallery-thumb" style="background:linear-gradient(135deg,#1a2a3a,#2a3a4a)">🌌</div>
+            <div class="gallery-thumb" style="background:linear-gradient(135deg,#2a1a2a,#3a2a3a)">🌙</div>
+          </div>
+        </div>
+
+        <!-- 系统信息 -->
+        <div class="panel">
+          <div class="panel-header"><h3>⚙ 运行信息</h3></div>
+          <div style="padding:12px 16px;font-size:12px;color:var(--text-secondary);line-height:1.8">
+            <div>模型: Realistic-Vision-V5.1 (SD) + HunyuanVideo 720 (fp8)</div>
+            <div>分辨率: 512×512 · 步数: 15 · 帧长: 25帧 (~1秒)</div>
+            <div>GPU: RTX 4090 · 24.6 GB</div>
+            <div>批量提交: 6视频同时入队, 串行执行</div>
+            <div>输出: 1100帧 PNG + 6段 WebM</div>
+          </div>
+        </div>
+
+      </div>
+    </main>
+  </div>
+
+  <footer class="bottombar">
+    <div class="bottombar-left">
+      <span>推理结果: <strong>✅ 全链路验证通过</strong></span>
+      <span class="sep">|</span>
+      <span>GPU: RTX 4090</span>
+    </div>
+    <div class="bottombar-right">
+      <span>2026-06-21 09:36 CST</span>
+    </div>
+  </footer>
+</div>
+</body>
+</html>

@@ -12,7 +12,7 @@ import os
 import json
 import asyncio
 
-os.environ['DEEPSEEK_API_KEY'] = 'sk-6d6…393a'
+os.environ['DEEPSEEK_API_KEY'] = ''  # 在环境变量中设置
 
 from agents.script_agent import ScriptAgent
 from agents.storyboard_agent import StoryboardAgent

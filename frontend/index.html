@@ -1,13 +1,225 @@
-<!doctype html>
-<html lang="en">
-  <head>
-    <meta charset="UTF-8" />
-    <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
-    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>frontend</title>
-  </head>
-  <body>
-    <div id="app"></div>
-    <script type="module" src="/src/main.js"></script>
-  </body>
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>AI 漫剧制作平台</title>
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<div id="app">
+  <!-- 标题栏 -->
+  <header class="topbar">
+    <div class="topbar-left">
+      <div class="logo">
+        <span class="logo-icon">✦</span>
+        <span class="logo-text">漫剧工坊</span>
+        <span class="logo-badge">v0.2</span>
+      </div>
+      <nav class="nav-links">
+        <a class="active" href="#create">创作</a>
+        <a href="#library">作品库</a>
+        <a href="#settings">设置</a>
+      </nav>
+    </div>
+    <div class="topbar-right">
+      <span class="server-status" id="serverStatus">
+        <span class="status-dot"></span>GPU 在线
+      </span>
+      <button class="btn btn-ghost" id="refreshBtn" title="刷新">↻</button>
+    </div>
+  </header>
+
+  <div class="layout">
+    <!-- 左侧工作流面板 -->
+    <aside class="sidebar">
+      <div class="sidebar-header">
+        <h3>工作流</h3>
+        <span class="badge" id="stepBadge">0/7</span>
+      </div>
+
+      <div class="steps" id="steps">
+        <div class="step completed" data-step="1">
+          <div class="step-indicator"><span class="check">✓</span></div>
+          <div class="step-body">
+            <div class="step-title">✍ 剧本生成</div>
+            <div class="step-desc">DeepSeek 驱动</div>
+          </div>
+        </div>
+        <div class="step completed" data-step="2">
+          <div class="step-indicator"><span class="check">✓</span></div>
+          <div class="step-body">
+            <div class="step-title">🎬 分镜拆解</div>
+            <div class="step-desc">结构化镜头</div>
+          </div>
+        </div>
+        <div class="step completed" data-step="3">
+          <div class="step-indicator"><span class="check">✓</span></div>
+          <div class="step-body">
+            <div class="step-title">👤 角色定妆</div>
+            <div class="step-desc">ComfyUI SD</div>
+          </div>
+        </div>
+        <div class="step completed" data-step="4">
+          <div class="step-indicator"><span class="check">✓</span></div>
+          <div class="step-body">
+            <div class="step-title">🖼 场景出图</div>
+            <div class="step-desc">14 分镜 SD</div>
+          </div>
+        </div>
+        <div class="step active" data-step="5">
+          <div class="step-indicator"><span class="spinner">◌</span></div>
+          <div class="step-body">
+            <div class="step-title">🎥 图生视频</div>
+            <div class="step-desc">HunyuanVideo · GPU 排队中</div>
+          </div>
+        </div>
+        <div class="step pending" data-step="6">
+          <div class="step-indicator"><span class="num">6</span></div>
+          <div class="step-body">
+            <div class="step-title">💬 字幕生成</div>
+            <div class="step-desc">ASR / 自动打轴</div>
+          </div>
+        </div>
+        <div class="step pending" data-step="7">
+          <div class="step-indicator"><span class="num">7</span></div>
+          <div class="step-body">
+            <div class="step-title">🎞 合成输出</div>
+            <div class="step-desc">FFmpeg 合成</div>
+          </div>
+        </div>
+      </div>
+
+      <div class="sidebar-params">
+        <h4>生成参数</h4>
+        <div class="param-row">
+          <label>分辨率</label>
+          <select id="resSelect">
+            <option>512×512</option>
+            <option>768×768</option>
+            <option>1024×1024</option>
+          </select>
+        </div>
+        <div class="param-row">
+          <label>视频帧数</label>
+          <select id="framesSelect">
+            <option>25 (≈1s)</option>
+            <option selected>49 (≈2s)</option>
+            <option>97 (≈4s)</option>
+          </select>
+        </div>
+        <div class="param-row">
+          <label>采样步数</label>
+          <select id="stepsSelect">
+            <option>12 (快)</option>
+            <option selected>15 (均衡)</option>
+            <option>25 (质量)</option>
+          </select>
+        </div>
+      </div>
+    </aside>
+
+    <!-- 主内容 -->
+    <main class="main">
+      <!-- 输入区 -->
+      <section class="input-section">
+        <div class="input-card">
+          <div class="input-header">
+            <h2>输入故事梗概</h2>
+            <span class="hint">支持中/英文 · 50-200 字最佳</span>
+          </div>
+          <div class="input-body">
+            <textarea id="storyInput" placeholder="输入一段故事梗概，AI 将自动完成：剧本创作 → 分镜拆解 → 角色定妆 → 场景出图 → 图生视频 → 字幕合成 → 最终输出…" rows="3">一个程序员意外穿越到全是猫娘的世界，被当成稀有物种保护起来</textarea>
+            <div class="input-actions">
+              <select class="style-picker" id="stylePicker">
+                <option>默认 · 写实</option>
+                <option>二次元 · 动漫</option>
+                <option>水墨 · 国风</option>
+                <option>赛博朋克</option>
+              </select>
+              <button class="btn btn-primary" id="generateBtn">▶ 开始生成</button>
+              <button class="btn btn-danger" id="stopBtn" style="display:none">■ 停止</button>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <!-- 进度 & 预览 -->
+      <section class="preview-section">
+        <!-- 当前进度 -->
+        <div class="progress-card" id="progressCard" style="display:none">
+          <div class="progress-header">
+            <span id="progressTitle">正在生成中…</span>
+            <span id="progressTime">0:00</span>
+          </div>
+          <div class="progress-bar">
+            <div class="progress-fill" id="progressFill" style="width:0%"></div>
+          </div>
+          <div class="progress-detail" id="progressDetail">初始化…</div>
+        </div>
+
+        <!-- 角色卡片 -->
+        <div class="panel" id="charactersPanel" style="display:none">
+          <div class="panel-header">
+            <h3>角色定妆</h3>
+            <span class="badge" id="charCount">4 个角色</span>
+          </div>
+          <div class="character-grid" id="characterGrid">
+            <!-- JS动态渲染 -->
+          </div>
+        </div>
+
+        <!-- 分镜网格 -->
+        <div class="panel" id="shotsPanel" style="display:none">
+          <div class="panel-header">
+            <h3>分镜预览</h3>
+            <div class="panel-actions">
+              <span class="badge" id="shotCount">6 镜头</span>
+              <button class="btn btn-ghost btn-sm" id="toggleGridView">网格/列表</button>
+            </div>
+          </div>
+          <div class="shot-grid" id="shotGrid">
+            <!-- JS动态渲染 -->
+          </div>
+        </div>
+
+        <!-- 视频输出 -->
+        <div class="panel" id="videoPanel" style="display:none">
+          <div class="panel-header">
+            <h3>视频输出</h3>
+            <div class="panel-actions">
+              <span class="badge" id="videoCount">0 段</span>
+              <button class="btn btn-primary btn-sm" id="exportBtn">导出全部</button>
+            </div>
+          </div>
+          <div class="video-grid" id="videoGrid">
+            <!-- JS动态渲染 -->
+          </div>
+        </div>
+
+        <!-- 空状态 -->
+        <div class="empty-state" id="emptyState">
+          <div class="empty-icon">🎬</div>
+          <h3>还没有作品</h3>
+          <p>输入故事梗概，点击「开始生成」即可创作你的第一部 AI 漫剧</p>
+        </div>
+      </section>
+    </main>
+  </div>
+</div>
+
+<!-- 底部状态栏 -->
+<footer class="bottombar">
+  <div class="bottombar-left">
+    <span>GPU: <strong id="gpuInfo">RTX 4090 · 3.7/24.6 GB</strong></span>
+    <span class="sep">|</span>
+    <span>模型: <strong>HunyuanVideo + SD</strong></span>
+  </div>
+  <div class="bottombar-right">
+    <span id="queueInfo">队列: 1 运行 · 5 等待</span>
+  </div>
+</footer>
+
+<script src="app.js"></script>
+</body>
 </html>
