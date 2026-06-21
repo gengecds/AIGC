@@ -38,17 +38,35 @@ class ComfySDImageProvider(ImageProvider):
         seed: Optional[int] = None,
         **kwargs,
     ) -> list[dict]:
-        """单张图片生成，返回输出图片信息列表 [{filename, subfolder, type}]"""
-        wf = ComfyUIClient.build_txt2img_workflow(
-            ckpt_name=self._ckpt,
-            prompt=prompt,
-            negative_prompt=kwargs.get("negative_prompt", ""),
-            width=kwargs.get("width", 512),
-            height=kwargs.get("height", 512),
-            seed=seed or 42,
-            steps=kwargs.get("steps", 12),
-            cfg=kwargs.get("cfg", 7.5),
-        )
+        """单张图片生成，支持 ControlNet + IP-Adapter"""
+        ctrl_type = kwargs.get("controlnet_type") or kwargs.get("ctrl_type") or None
+        ctrl_image = kwargs.get("controlnet_image") or ref_image or None
+
+        if ctrl_type and ctrl_image:
+            wf = ComfyUIClient.build_controlnet_workflow(
+                ckpt_name=self._ckpt,
+                prompt=prompt,
+                negative_prompt=kwargs.get("negative_prompt", ""),
+                controlnet_name=ctrl_type,
+                controlnet_image=ctrl_image,
+                width=kwargs.get("width", 512),
+                height=kwargs.get("height", 512),
+                seed=seed or 42,
+                steps=kwargs.get("steps", 12),
+                cfg=kwargs.get("cfg", 7.5),
+                controlnet_strength=kwargs.get("controlnet_strength", 0.75),
+            )
+        else:
+            wf = ComfyUIClient.build_txt2img_workflow(
+                ckpt_name=self._ckpt,
+                prompt=prompt,
+                negative_prompt=kwargs.get("negative_prompt", ""),
+                width=kwargs.get("width", 512),
+                height=kwargs.get("height", 512),
+                seed=seed or 42,
+                steps=kwargs.get("steps", 12),
+                cfg=kwargs.get("cfg", 7.5),
+            )
         resp = await self.client.queue_prompt(wf)
         prompt_id = resp["prompt_id"]
         result = await self.client.wait_for_completion(prompt_id)
@@ -76,16 +94,35 @@ class ComfySDImageProvider(ImageProvider):
         for shot in shots:
             prompt = shot.get("sd_prompt", "")
             seed = max(0, shot.get("seed", 0) or 0)
-            wf = ComfyUIClient.build_txt2img_workflow(
-                ckpt_name=self._ckpt,
-                prompt=prompt,
-                negative_prompt=shot.get("negative_prompt", ""),
-                width=int(shot.get("width", 512)),
-                height=int(shot.get("height", 512)),
-                seed=seed,
-                steps=int(shot.get("steps", 12)),
-                cfg=float(shot.get("cfg", 7.5)),
-            )
+
+            ctrl_type = shot.get("controlnet_type") or None
+            ctrl_image = shot.get("controlnet_image") or shot.get("ref_image") or None
+
+            if ctrl_type and ctrl_image:
+                wf = ComfyUIClient.build_controlnet_workflow(
+                    ckpt_name=self._ckpt,
+                    prompt=prompt,
+                    negative_prompt=shot.get("negative_prompt", ""),
+                    controlnet_name=ctrl_type,
+                    controlnet_image=ctrl_image,
+                    width=int(shot.get("width", 512)),
+                    height=int(shot.get("height", 512)),
+                    seed=seed,
+                    steps=int(shot.get("steps", 12)),
+                    cfg=float(shot.get("cfg", 7.5)),
+                    controlnet_strength=float(shot.get("controlnet_strength", 0.65)),
+                )
+            else:
+                wf = ComfyUIClient.build_txt2img_workflow(
+                    ckpt_name=self._ckpt,
+                    prompt=prompt,
+                    negative_prompt=shot.get("negative_prompt", ""),
+                    width=int(shot.get("width", 512)),
+                    height=int(shot.get("height", 512)),
+                    seed=seed,
+                    steps=int(shot.get("steps", 12)),
+                    cfg=float(shot.get("cfg", 7.5)),
+                )
             resp = await self.client.queue_prompt(wf)
             submitted.append({
                 "prompt_id": resp["prompt_id"],

@@ -56,6 +56,9 @@ class ImageGenAgent(Agent):
                     "sd_negative": shot.get("sd_negative", ""),
                     "seed": shot.get("seed", -1),
                     "ref_image": ref_path,
+                    "controlnet_type": "control_v11p_sd15_canny",
+                    "controlnet_image": ref_path,
+                    "controlnet_strength": 0.65,
                 })
 
             # batch_generate 返回 list[dict]，转为 {shot_id: file_info} 格式

@@ -159,6 +159,87 @@ class ComfyUIClient:
         }
 
     @staticmethod
+    def build_controlnet_workflow(
+        ckpt_name: str,
+        prompt: str,
+        negative_prompt: str = "",
+        controlnet_name: str = "control_v11p_sd15_canny.pth",
+        controlnet_image: str = "",
+        width: int = 512,
+        height: int = 512,
+        seed: int = 42,
+        steps: int = 12,
+        cfg: float = 7.5,
+        controlnet_strength: float = 0.75,
+        batch_size: int = 1,
+    ) -> dict:
+        """构建带 ControlNet 的文生图工作流"""
+        ctrl_name_clean = controlnet_name.replace(".pth", "").replace(".safetensors", "")
+        return {
+            "3": {"class_type": "KSampler", "inputs": {
+                "seed": seed, "steps": steps, "cfg": cfg,
+                "sampler_name": "euler", "scheduler": "normal", "denoise": 1.0,
+                "model": ["4", 0], "positive": ["9", 0], "negative": ["7", 0],
+                "latent_image": ["5", 0],
+            }},
+            "4": {"class_type": "CheckpointLoaderSimple", "inputs": {"ckpt_name": ckpt_name}},
+            "5": {"class_type": "EmptyLatentImage", "inputs": {"width": width, "height": height, "batch_size": batch_size}},
+            "6": {"class_type": "LoadImage", "inputs": {"image": controlnet_image}},
+            "7": {"class_type": "CLIPTextEncode", "inputs": {"text": negative_prompt, "clip": ["4", 1]}},
+            "8": {"class_type": "ControlNetLoader", "inputs": {"control_net_name": ctrl_name_clean}},
+            "9": {"class_type": "ControlNetApply", "inputs": {
+                "strength": controlnet_strength,
+                "conditioning": ["10", 0],
+                "control_net": ["8", 0],
+                "image": ["6", 0],
+            }},
+            "10": {"class_type": "CLIPTextEncode", "inputs": {"text": prompt, "clip": ["4", 1]}},
+            "11": {"class_type": "VAEDecode", "inputs": {"samples": ["3", 0], "vae": ["4", 2]}},
+            "12": {"class_type": "SaveImage", "inputs": {"filename_prefix": "ctrl_output", "images": ["11", 0]}},
+        }
+
+    @staticmethod
+    def build_ipadapter_workflow(
+        ckpt_name: str,
+        prompt: str,
+        negative_prompt: str = "",
+        ref_image: str = "",
+        ipadapter_model: str = "ip-adapter-plus-face.safetensors",
+        width: int = 512,
+        height: int = 512,
+        seed: int = 42,
+        steps: int = 12,
+        cfg: float = 7.5,
+        ipadapter_weight: float = 0.7,
+        batch_size: int = 1,
+    ) -> dict:
+        """构建 IP-Adapter 角色锁定工作流"""
+        return {
+            "3": {"class_type": "KSampler", "inputs": {
+                "seed": seed, "steps": steps, "cfg": cfg,
+                "sampler_name": "euler", "scheduler": "normal", "denoise": 1.0,
+                "model": ["13", 0], "positive": ["12", 0], "negative": ["7", 0],
+                "latent_image": ["5", 0],
+            }},
+            "4": {"class_type": "CheckpointLoaderSimple", "inputs": {"ckpt_name": ckpt_name}},
+            "5": {"class_type": "EmptyLatentImage", "inputs": {"width": width, "height": height, "batch_size": batch_size}},
+            "6": {"class_type": "LoadImage", "inputs": {"image": ref_image}},
+            "7": {"class_type": "CLIPTextEncode", "inputs": {"text": negative_prompt, "clip": ["4", 1]}},
+            "8": {"class_type": "IPAdapterModelLoader", "inputs": {"ipadapter_file": ipadapter_model}},
+            "9": {"class_type": "CLIPVisionLoader", "inputs": {"clip_name": "CLIP-ViT-H-14-laion2B-s32B-b79K.safetensors"}},
+            "10": {"class_type": "CLIPVisionEncode", "inputs": {"clip_vision": ["9", 0], "image": ["6", 0]}},
+            "11": {"class_type": "IPAdapterUnifiedLoader", "inputs": {"preset": "PLUS", "model": ["4", 0]}},
+            "12": {"class_type": "IPAdapter", "inputs": {
+                "model": ["11", 0], "ipadapter": ["8", 0], "image": ["10", 0],
+                "weight": ipadapter_weight, "start_at": 0.0, "end_at": 1.0,
+                "weight_type": "original",
+            }},
+            "13": {"class_type": "CLIPTextEncode", "inputs": {"text": prompt, "clip": ["4", 1]}},
+            "14": {"class_type": "VAEDecode", "inputs": {"samples": ["3", 0], "vae": ["4", 2]}},
+            "15": {"class_type": "SaveImage", "inputs": {"filename_prefix": "ipadapter_output", "images": ["14", 0]}},
+        }
+
+    @staticmethod
     def build_img2video_workflow(
         input_image_path: str,
         model_name: str = "hunyuan_video",
