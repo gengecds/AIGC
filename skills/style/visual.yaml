@@ -1,0 +1,141 @@
+# ═══ 风格 · 视觉风格词库（横跨出图/出视频，可逐项或合并注入）═══
+# 定位：决定"画面长什么样"的视觉调性。与 image/topic、video/genre 同为"自动匹配的词块库"，
+#        但层级更高——它是"叠加在题材/内容之上"的修饰层，可单选也可多风格合并
+#        （如"赛博朋克 + 国风古风 = 赛博朋克国风"）。
+# 说明：
+#   * 只收录"真正定义画面风格"的条目——视觉美学 / 动画3D / 艺术流派与电影感。
+#   * 内容/情感类（剧情·沙雕·高燃·悬疑·温情）已由 video/genre 承载，
+#     实用/功能类（纪实·口播·教程·混剪）已由 video/use 承载，此处不重复。
+# 词条结构：{zh, en, note}；resolver 只取 en 拼接，zh/note 供人工阅读理解。
+# 合并：merge_styles("赛博朋克","国风古风") → 取两者 words 的 en 并集拼接。
+
+groups:
+# ─────────────────────────────
+# 一、视觉/美学类
+# ─────────────────────────────
+- name: 国风古风
+  en: "chinese traditional / guofeng"
+  neg: "western oil painting, modern graphic, grime"
+  words:
+  - zh: "工笔彩绘"
+    en: "fine brushwork gongbi painting, delicate line and mineral pigment, elegant traditional color palette"
+  - zh: "敦煌壁画"
+    en: "dunhuang mural style, cinnabar and azurite palette, weathered cracked wall texture, ancient fresco patina"
+  - zh: "汉服古建"
+    en: "hanfu robes, ancient chinese architecture, upturned eaves, carved wooden lattice, misty mountains backdrop"
+- name: 复古港风
+  en: "retro hong kong style"
+  neg: "clean modern color, flat lighting, low contrast"
+  words:
+  - zh: "胶片颗粒"
+    en: "film grain, high-saturation neon color wash, soft warm glow, nostalgic analog texture"
+  - zh: "卷发红唇"
+    en: "vintage wavy hair, bold red lips, 80s-90s cinematic still, dramatic rim lighting, smoke haze"
+- name: 蒸汽波
+  en: "vaporwave"
+  neg: "realistic texture, muted desaturated color"
+  words:
+  - zh: "粉紫蓝配色"
+    en: "pastel pink and violet and cyan palette, dreamy neon gradients, retro synthwave grid"
+  - zh: "迷幻复古"
+    en: "surreal retro collage, retro computer graphics, VHS glitch, palm trees and classical statue, dreamlike liminal space"
+- name: 蒸汽朋克
+  en: "steampunk"
+  neg: "sleek plastic, clean sci-fi chrome"
+  words:
+  - zh: "黄铜机械"
+    en: "brass and copper machinery, exposed gears and pistons, riveted metal, industrial-revolution vintage futurism"
+  - zh: "齿轮飞艇"
+    en: "airship and zeppelin, clockwork device, leather and steam, warm amber workshop lighting, Victorian adventure"
+- name: 赛博朋克
+  en: "cyberpunk"
+  neg: "rural pastoral, traditional, low contrast, flat light"
+  words:
+  - zh: "霓虹雨夜"
+    en: "neon-lit rain-soaked street, holographic advertisements, high-contrast cyan and magenta, futuristic megacity"
+  - zh: "机械义体"
+    en: "cybernetic implants, mirrored reflections on wet asphalt, moody high-tech corridor, gritty dystopian atmosphere"
+- name: 治愈系ins
+  en: "healing / instagram style"
+  neg: "dark moody, high-contrast drama, cold harsh light"
+  words:
+  - zh: "暖调清新"
+    en: "warm soft natural light, airy breathing-room composition, pastel clean grade, gentle cozy everyday aesthetic"
+  - zh: "慢生活氛围"
+    en: "slow cosy life, plants and pets, soft bokeh, calm serene mood, muted warm tones, relaxing storybook feel"
+- name: 极简主义
+  en: "minimalist"
+  neg: "cluttered, busy detail, saturated noise"
+  words:
+  - zh: "留白构图"
+    en: "lots of negative space, clean lines, single strong subject, generous whitespace, high-end muted color"
+  - zh: "高级灰莫兰迪"
+    en: "morandi muted tone palette, sophisticated gray-tonal color, refined understated simplicity, elegant restraint"
+
+# ─────────────────────────────
+# 二、动画/3D 衍生
+# ─────────────────────────────
+- name: 日系动漫
+  en: "japanese anime"
+  neg: "photoreal, 3D, realistic skin"
+  words:
+  - zh: "赛璐璐平涂"
+    en: "cel shading, crisp clean lineart, vibrant flat color, japanese anime style, dynamic expressive eyes"
+  - zh: "吉卜力风"
+    en: "studio ghibli style, hand-painted lush background, soft dreamy cloud, warm nostalgic color, delicate light"
+  - zh: "新海诚风"
+    en: "makoto shinkai style, luminous sky and light rays, hyper-detailed scenery, vivid saturated gradation, romantic atmosphere"
+- name: 3D卡通
+  en: "3D cartoon"
+  neg: "flat 2D, dirty texture, harsh lighting"
+  words:
+  - zh: "皮克斯风"
+    en: "pixar style, smooth glossy material, stylized expressive character, cinematic soft render, rounded charming form"
+  - zh: "黏土渲染"
+    en: "claymation render, soft matte clay texture, handmade doll-like warm feel, rounded toy silhouette, cute plush detail"
+- name: Q版卡通
+  en: "chibi cartoon"
+  neg: "realistic proportion, detailed anatomy, muted tones"
+  words:
+  - zh: "二头身"
+    en: "chibi 2-3 head proportion, exaggerated big cute eyes, oversized head, tiny body, kawaii energy"
+  - zh: "高饱和萌系"
+    en: "highly saturated vivid color, playful sticker-like clean line, adorable charm, flat cheerful shading"
+- name: 像素艺术
+  en: "pixel art"
+  neg: "smooth gradient, photo-real, anti-aliased blur"
+  words:
+  - zh: "16-bit怀旧"
+    en: "16-bit pixel art, limited color palette, chunky pixel grid, retro game aesthetic, nostalgic arcade vibe"
+  - zh: "复古像素"
+    en: "vintage pixel sprite, dithered shading, crisp blocky edges, 8-bit sprites, retro platformer atmosphere"
+
+# ─────────────────────────────
+# 三、艺术流派与电影感
+# ─────────────────────────────
+- name: 古典油画
+  en: "classical oil painting"
+  neg: "digital flat look, plastic, clean cartoon"
+  words:
+  - zh: "厚重笔触"
+    en: "thick impasto brush stroke, oil on canvas, warm golden chiaroscuro, dramatic classical lighting, museum masterpiece"
+- name: 水彩
+  en: "watercolor"
+  neg: "hard edge, saturated bold blocks, oily texture"
+  words:
+  - zh: "通透晕染"
+    en: "translucent watercolor wash, soft pigment bleed, light paper grain, fresh airy colors, gentle watercolor bloom"
+- name: 素描
+  en: "sketch / pencil"
+  neg: "full color, glossy shading, rendered fill"
+  words:
+  - zh: "线条速写"
+    en: "graphite pencil sketch, expressive linework, hatching cross-hatching, grayscale, hand-drawn study feel"
+- name: 电影级质感
+  en: "cinematic"
+  neg: "flat amateur lighting, washed-out color, cheap look"
+  words:
+  - zh: "宽画幅浅景深"
+    en: "cinematic 2.35:1 widescreen, shallow depth of field, creamy bokeh, professional film color grade, blockbuster polish"
+  - zh: "电影调色"
+    en: "anamorphic lens flare, teal and orange grade, filmic contrast, cinematic still, large-format epic production feel"

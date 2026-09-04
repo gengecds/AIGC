@@ -1,0 +1,23 @@
+# ═══ 视频 · UI容器变形动效 ═══
+# 来源：抖音《用大白话向AI描述7种ios容器变形动效》
+groups:
+  - name: 容器变形动效
+    en: "container morph animation"
+    neg: ""
+    words:
+      - { zh: 圆环到胶囊, en: "morph from a circle into a pill shape, dynamic container transform" }
+      - { zh: 胶囊到卡片, en: "expand a pill into a card, container grows into a card surface" }
+      - { zh: 收起到展开, en: "transition from compact state to fully expanded state, unfold the container" }
+      - { zh: 圆角过渡, en: "smooth corner-radius transition, animate the container's rounded corners" }
+      - { zh: 尺寸形变, en: "size morph, animate the container scaling between dimensions" }
+      - { zh: 内容重排, en: "content reflow, elements reflow to fit the resized container" }
+      - { zh: 反向收起, en: "reverse collapse, morph back from expanded to closed state" }
+  - name: 动效描述要素
+    en: "motion description essentials"
+    neg: ""
+    words:
+      - { zh: 明确起点, en: "clearly specify the starting state of the animation" }
+      - { zh: 明确终点, en: "clearly specify the ending state of the animation" }
+      - { zh: 标注尺寸变化方向, en: "state the direction of size change, growing or shrinking" }
+      - { zh: 标注内容出现时机, en: "state when the content appears relative to the deformation" }
+      - { zh: 标注结束状态, en: "state the final resting state after the morph completes" }

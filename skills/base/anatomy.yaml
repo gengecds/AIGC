@@ -1,0 +1,51 @@
+# ═══ 全球基础：人体解剖与角色一致性 ═══
+# 专治「人不像人鬼不像鬼」「五官崩坏」「同一角色每镜脸不一样」。
+# 分为两块：正向（结构正确）vs 负向（禁绝崩坏），都无条件注入。
+
+# ── 正向：解剖结构与一致性锚点 ──
+positive:
+  - zh: "正确的人体结构"
+    en: "anatomically correct, well-proportioned body, correct bone structure"
+    note: "防止畸形/比例失调"
+  - zh: "自然五官对称"
+    en: "symmetric natural facial features, believable eye structure"
+    note: "防止歪脸/大小眼"
+  - zh: "一致的五官清晰"
+    en: "consistent facial identity, recognizable same character"
+    note: "一致性锚点"
+  - zh: "完整手指结构"
+    en: "correct hand anatomy, five fingers on each hand"
+    note: "防止手部崩坏"
+  - zh: "灵动真实眼神"
+    en: "lively eyes with catchlight, natural gaze"
+    note: "眼神空洞 → 有神"
+  - zh: "自然呼吸感面部"
+    en: "relaxed facial muscles, natural micro-tension"
+    note: "面部松弛，不僵硬"
+
+# ── 负向：必须规避的崩坏 ──
+negative:
+  - zh: "畸形脸"
+    en: "deformed face, mutated features"
+    note: "禁止"
+  - zh: "多余手指"
+    en: "extra fingers, missing fingers, fused fingers"
+    note: "禁止"
+  - zh: "多余肢体"
+    en: "extra limbs, extra arms, extra legs, bad anatomy"
+    note: "禁止"
+  - zh: "比例失调"
+    en: "disproportionate body, bad proportions, unnatural pose"
+    note: "禁止"
+  - zh: "复联脸/多张脸"
+    en: "duplicated face, multiple faces, two faces"
+    note: "禁止"
+  - zh: "塑料质感"
+    en: "plastic skin, doll-like, porcelain skin, airbrushed"
+    note: "禁止油光脸"
+  - zh: "插画感"
+    en: "illustration, painting, anime, cartoon, coloring book, sketch"
+    note: "所有类型默认禁用插画向，除非用户明确要手绘"
+  - zh: "文字/水印"
+    en: "text, watermark, logo, signature, jpeg artifacts"
+    note: "禁止"

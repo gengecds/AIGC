@@ -3,131 +3,235 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>AI 漫剧制作平台</title>
+<title>AI 漫剧工坊 · 创作控制台</title>
+<link rel="icon" href="public/favicon.svg">
 <link rel="stylesheet" href="style.css">
 </head>
 <body>
 
-<!-- ═══ 顶栏（原型 header） ═══ -->
-<header class="header">
-  <div class="logo"><span>AI</span> 漫剧制作平台</div>
-  <div class="actions">
-    <span class="server-status" id="serverStatus"><span class="status-dot"></span>GPU 在线</span>
-    <button onclick="toggleDrawer()">📂 历史任务</button>
+<!-- ═══ 顶栏 ═══ -->
+<header class="topbar">
+  <div class="brand">
+    <div class="brand-mark">帧</div>
+    <div class="brand-text">
+      <div class="brand-name">AI 漫剧工坊</div>
+      <div class="brand-sub">LOCAL PIPELINE STUDIO</div>
+    </div>
+  </div>
+  <div class="topbar-right">
+    <span class="server-status" id="serverStatus"><span class="dot"></span>本地引擎在线</span>
+    <button class="btn btn-ghost" id="modelLibBtn">模型库</button>
+    <button class="btn btn-ghost" id="skillsBtn">技能库</button>
+    <button class="btn btn-ghost" id="historyBtn">历史任务</button>
+    <div class="user-area" id="userArea" style="display:none">
+      <span class="user-name" id="userName">—</span>
+      <button class="btn btn-ghost btn-sm" id="logoutBtn">退出</button>
+    </div>
   </div>
 </header>
 
 <div class="layout">
-  <!-- ═══ 左侧面板 ═══ -->
+
+  <!-- ═══ 左侧栏 ═══ -->
   <aside class="sidebar">
-    <div class="tab-group">
-      <button class="tab-btn active" onclick="switchTab('asset')">🏛️ 资产库</button>
-      <button class="tab-btn" onclick="switchTab('task')">📋 任务概览</button>
+    <div class="side-tabs">
+      <button class="side-tab active" data-tab="asset">资产库</button>
+      <button class="side-tab" data-tab="task">任务概览</button>
     </div>
-    <div id="tab-asset">
-      <div style="font-size:11px;color:#555570;margin-bottom:6px">角色定妆照</div>
-      <div class="asset-grid" id="assetChars"></div>
-      <div style="font-size:11px;color:#555570;margin:10px 0 6px">场景背景</div>
-      <div class="asset-grid" id="assetScenes"></div>
+
+    <div class="side-body" id="tab-asset">
+      <div class="side-label">角色定妆照</div>
+      <div class="asset-grid" id="assetChars"><div class="asset-empty">暂无角色</div></div>
+      <div class="side-label">场景背景</div>
+      <div class="asset-grid" id="assetScenes"><div class="asset-empty">暂无场景</div></div>
     </div>
-    <div id="tab-task" style="display:none">
-      <div class="task-overview" id="taskOverview">
-        <div class="overview-item"><span>剧名</span><strong id="ovTitle">—</strong></div>
-        <div class="overview-item"><span>集数</span><strong id="ovEpisodes">—</strong></div>
-        <div class="overview-item"><span>分镜</span><strong id="ovShots">—</strong></div>
-        <div class="overview-item"><span>状态</span><strong id="ovStatus" style="color:#6c5ce7">空闲</strong></div>
-        <div class="overview-item"><span>耗时</span><strong id="ovTime">—</strong></div>
-        <div class="overview-item"><span>预估剩余</span><strong id="ovRemain">—</strong></div>
-        <div style="margin-top:10px;font-size:11px;color:#555570">Checkpoint</div>
-        <div id="checkpointList"></div>
+
+    <div class="side-body" id="tab-task" style="display:none">
+      <div class="overview">
+        <div class="ov-row"><span>剧名</span><strong id="ovTitle">—</strong></div>
+        <div class="ov-row"><span>集数</span><strong id="ovEpisodes">—</strong></div>
+        <div class="ov-row"><span>分镜</span><strong id="ovShots">—</strong></div>
+        <div class="ov-row"><span>状态</span><strong id="ovStatus" class="ov-status-idle">空闲</strong></div>
+        <div class="ov-row"><span>耗时</span><strong id="ovTime">—</strong></div>
+        <div class="ov-row"><span>预估剩余</span><strong id="ovRemain">—</strong></div>
       </div>
+      <div class="side-label">管线断点 Checkpoint</div>
+      <div id="checkpointList"></div>
     </div>
   </aside>
 
-  <!-- ═══ 主内容区 ═══ -->
-  <div class="main">
-    <div class="main-scroll" id="mainScroll">
+  <!-- ═══ 主内容 ═══ -->
+  <main class="main">
 
-      <!-- 输入区 -->
-      <div class="input-area">
-        <div class="row">
-          <textarea id="storyInput" rows="3" placeholder="键入你的故事，如：一个程序员穿越到全是猫娘的世界…">一个程序员穿越到全是猫娘的世界，被当成稀有物种保护起来</textarea>
-          <div class="controls">
-            <select class="style-select" id="stylePicker">
-              <option>🎨 写实</option>
-              <option>二次元</option>
-              <option>水墨风</option>
-              <option>赛博朋克</option>
-            </select>
-            <button class="start-btn" id="generateBtn">🚀 开始制作</button>
-            <button class="stop-btn" id="stopBtn">⏹ 停止</button>
-          </div>
+    <!-- 输入区 -->
+    <section class="hero">
+      <div class="hero-kicker">AI 驱动 · 全本地 · 9 步管线</div>
+      <h1 class="hero-title">把一句话，变成一支片子</h1>
+      <textarea id="storyInput" rows="3" placeholder="键入你的故事，例如：深夜街角的老王锅贴店，金黄酥脆的锅贴出锅，香气吸引路人驻足…">一个程序员穿越到全是猫娘的世界，被当成稀有物种保护起来</textarea>
+      <div class="style-picker-row">
+        <span class="style-picker-label">🎨 风格</span>
+        <div class="style-chips" id="styleChips"></div>
+      </div>
+      <div class="hero-controls">
+        <button class="btn btn-primary" id="generateBtn">开始制作</button>
+        <button class="btn btn-danger" id="stopBtn" style="display:none">停止</button>
+      </div>
+      <div class="style-info" id="styleInfo"></div>
+    </section>
+
+    <!-- 8 步管线 -->
+    <section class="pipeline">
+      <div class="pipeline-track" id="cardRow">
+        <div class="pipe-card state-idle" data-agent="research" onclick="window.selectCard && selectCard('research')">
+          <div class="pipe-step">00</div>
+          <div class="pipe-icon">案</div>
+          <div class="pipe-title">方案</div>
+          <div class="pipe-status" id="status-research">空闲</div>
+        </div>
+        <div class="pipe-card state-idle" data-agent="script" onclick="window.selectCard && selectCard('script')">
+          <div class="pipe-step">01</div>
+          <div class="pipe-icon">文</div>
+          <div class="pipe-title">剧本</div>
+          <div class="pipe-status" id="status-script">空闲</div>
+        </div>
+        <div class="pipe-card state-idle" data-agent="storyboard" onclick="window.selectCard && selectCard('storyboard')">
+          <div class="pipe-step">02</div>
+          <div class="pipe-icon">镜</div>
+          <div class="pipe-title">分镜</div>
+          <div class="pipe-status" id="status-storyboard">空闲</div>
+        </div>
+        <div class="pipe-card state-idle" data-agent="character" onclick="window.selectCard && selectCard('character')">
+          <div class="pipe-step">03</div>
+          <div class="pipe-icon">像</div>
+          <div class="pipe-title">定妆照</div>
+          <div class="pipe-status" id="status-character">空闲</div>
+        </div>
+        <div class="pipe-card state-idle" data-agent="image" onclick="window.selectCard && selectCard('image')">
+          <div class="pipe-step">04</div>
+          <div class="pipe-icon">图</div>
+          <div class="pipe-title">出图</div>
+          <div class="pipe-status" id="status-image">空闲</div>
+        </div>
+        <div class="pipe-card state-idle" data-agent="video" onclick="window.selectCard && selectCard('video')">
+          <div class="pipe-step">05</div>
+          <div class="pipe-icon">影</div>
+          <div class="pipe-title">视频</div>
+          <div class="pipe-status" id="status-video">空闲</div>
+        </div>
+        <div class="pipe-card state-idle" data-agent="subtitle" onclick="window.selectCard && selectCard('subtitle')">
+          <div class="pipe-step">06</div>
+          <div class="pipe-icon">字</div>
+          <div class="pipe-title">字幕</div>
+          <div class="pipe-status" id="status-subtitle">空闲</div>
+        </div>
+        <div class="pipe-card state-idle" data-agent="compose" onclick="window.selectCard && selectCard('compose')">
+          <div class="pipe-step">07</div>
+          <div class="pipe-icon">片</div>
+          <div class="pipe-title">合成</div>
+          <div class="pipe-status" id="status-compose">空闲</div>
+        </div>
+        <div class="pipe-card state-idle" data-agent="audio" onclick="window.selectCard && selectCard('audio')">
+          <div class="pipe-step">08</div>
+          <div class="pipe-icon">音</div>
+          <div class="pipe-title">音频</div>
+          <div class="pipe-status" id="status-audio">空闲</div>
         </div>
       </div>
 
-      <!-- 7 卡片 -->
-      <div class="cards-row" id="cardRow">
-        <div class="card state-idle" data-agent="script" onclick="selectCard('script')">
-          <div class="icon" style="filter:drop-shadow(0 0 4px rgba(108,92,231,.3))">📝</div>
-          <div class="title">剧本</div>
-          <div class="status-text" id="status-script">空闲</div>
-        </div>
-        <div class="card state-idle" data-agent="storyboard" onclick="selectCard('storyboard')">
-          <div class="icon" style="filter:drop-shadow(0 0 4px rgba(9,132,227,.3))">📋</div>
-          <div class="title">分镜</div>
-          <div class="status-text" id="status-storyboard">空闲</div>
-        </div>
-        <div class="card state-idle" data-agent="character" onclick="selectCard('character')">
-          <div class="icon" style="filter:drop-shadow(0 0 4px rgba(232,67,147,.3))">🎭</div>
-          <div class="title">定妆照</div>
-          <div class="status-text" id="status-character">空闲</div>
-        </div>
-        <div class="card state-idle" data-agent="image" onclick="selectCard('image')">
-          <div class="icon" style="filter:drop-shadow(0 0 4px rgba(0,184,148,.3))">🖼️</div>
-          <div class="title">出图</div>
-          <div class="status-text" id="status-image">空闲</div>
-        </div>
-        <div class="card state-idle" data-agent="video" onclick="selectCard('video')">
-          <div class="icon" style="filter:drop-shadow(0 0 4px rgba(253,203,110,.3))">🎬</div>
-          <div class="title">视频</div>
-          <div class="status-text" id="status-video">空闲</div>
-        </div>
-        <div class="card state-idle" data-agent="subtitle" onclick="selectCard('subtitle')">
-          <div class="icon" style="filter:drop-shadow(0 0 4px rgba(99,110,114,.3))">📄</div>
-          <div class="title">字幕</div>
-          <div class="status-text" id="status-subtitle">空闲</div>
-        </div>
-        <div class="card state-idle" data-agent="compose" onclick="selectCard('compose')">
-          <div class="icon" style="filter:drop-shadow(0 0 4px rgba(214,48,49,.3))">📦</div>
-          <div class="title">合成</div>
-          <div class="status-text" id="status-compose">空闲</div>
+      <!-- 进度 -->
+      <div class="progress-wrap">
+        <div class="progress-bar"><div class="progress-fill" id="progressFill" style="width:0%"></div></div>
+        <div class="progress-meta">
+          <span id="progressText">空闲</span>
+          <span id="progressPct">0% (0/7)</span>
         </div>
       </div>
+    </section>
 
-      <!-- 进度条 -->
-      <div class="progress-bar" id="progressBar"><div class="fill" id="progressFill" style="width:0%"></div></div>
-      <div class="progress-text">
-        <span id="progressText">空闲</span>
-        <span id="progressPct">0% (0/7 Agent)</span>
+    <!-- 详情区 -->
+    <section class="detail" id="detailSection" style="display:none">
+      <div class="detail-head">
+        <h2 id="detailTitle">详情</h2>
+        <button class="btn btn-ghost btn-sm" id="detailClose">关闭 ✕</button>
       </div>
+      <div class="detail-body" id="detailBody"></div>
+      <div class="detail-actions" id="detailActions" style="display:none"></div>
+    </section>
 
-      <!-- 详情区（动态渲染） -->
-      <div class="detail-area" id="detailArea"><div class="placeholder">👈 点击上方卡片查看详情</div></div>
+    <!-- 日志 -->
+    <section class="log" id="logbar">
+      <div class="log-head">
+        <span class="log-title">运行日志 <em id="logCount">0</em></span>
+        <button class="log-toggle" id="logHandle">收起 ▾</button>
+      </div>
+      <div class="log-body" id="logList"></div>
+    </section>
 
-      <!-- 日志区 -->
-      <div class="log-header"><span>📋 日志 <span id="logCount">0</span></span><button onclick="toggleLog()">收起 ▾</button></div>
-      <div class="log-area" id="logArea"></div>
+  </main>
+</div>
 
+<!-- 历史抽屉 -->
+<div class="drawer-overlay" id="drawerOverlay"></div>
+<div class="drawer" id="historyDrawer">
+  <div class="drawer-head">
+    <h3>历史任务</h3>
+    <button class="btn btn-ghost btn-sm" id="drawerClose">✕</button>
+  </div>
+  <div class="drawer-body" id="drawerBody"></div>
+</div>
+
+<!-- 模型库抽屉 -->
+<div class="drawer" id="modelLibDrawer">
+  <div class="drawer-head">
+    <h3>模型库 · 按风格</h3>
+    <button class="btn btn-ghost btn-sm" id="modelLibClose">✕</button>
+  </div>
+  <div class="drawer-body" id="modelLibBody"></div>
+</div>
+
+<!-- 技能库抽屉 -->
+<div class="drawer drawer-wide" id="skillsDrawer">
+  <div class="drawer-head">
+    <h3>技能库 · 可进化提示词词库</h3>
+    <button class="btn btn-ghost btn-sm" id="skillsClose">✕</button>
+  </div>
+  <div class="drawer-body" id="skillsBody"><div class="empty-state">加载中…</div></div>
+</div>
+
+<!-- ═══ 资产放大预览 ═══ -->
+<div class="img-modal-overlay" id="imgModalOverlay">
+  <div class="img-modal">
+    <button class="img-modal-close" id="imgModalClose" title="关闭">✕</button>
+    <div class="img-modal-stage"><img id="imgModalImg" alt="预览"></div>
+    <div class="img-modal-info">
+      <div class="img-modal-name" id="imgModalName"></div>
+      <div class="img-modal-meta" id="imgModalMeta"></div>
     </div>
   </div>
 </div>
 
-<!-- 历史任务抽屉 -->
-<div class="drawer-overlay" id="drawerOverlay" onclick="toggleDrawer()"></div>
-<div class="drawer" id="historyDrawer">
-  <button class="close-btn" onclick="toggleDrawer()">✕</button>
-  <h3>📂 历史任务</h3>
-  <div id="historyList"></div>
+<!-- ═══ 登录覆盖层 ═══ -->
+<div class="login-overlay" id="loginOverlay">
+  <div class="login-card">
+    <div class="login-brand">
+      <div class="login-logo">帧</div>
+      <div class="login-title">AI 漫剧工坊</div>
+      <div class="login-sub">LOCAL PIPELINE STUDIO · 创作控制台</div>
+    </div>
+    <div class="login-tabs">
+      <button class="login-tab active" data-mode="login">登录</button>
+      <button class="login-tab" data-mode="register">注册</button>
+    </div>
+    <form id="loginForm" autocomplete="off">
+      <label class="login-label">用户名</label>
+      <input class="login-input" id="loginUsername" type="text" placeholder="输入用户名" required>
+      <label class="login-label">密码</label>
+      <input class="login-input" id="loginPassword" type="password" placeholder="输入密码" required>
+      <div class="login-error" id="loginError"></div>
+      <button class="btn btn-primary login-submit" id="loginSubmit" type="submit">进入工作台</button>
+    </form>
+    <div class="login-hint">本地引擎 · 无需联网 · 账号自主注册</div>
+  </div>
 </div>
 
 <script src="app.js"></script>

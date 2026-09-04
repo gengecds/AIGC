@@ -1,0 +1,138 @@
+# ═══ 视频 · 商业与功能用途 → 目标导向体系 ═══
+# 定位：当视频有明确"用途/目的"时，解锁"为了达成该目的该有的镜头语言与氛围"。
+# 重构说明：原词库每类只有 1~2 个短语（"品牌质感""种草促销氛围"），无法指导镜头。
+#          现按"每个用途 = 一套以目标为导向的拍摄配方"重写：
+#          制作目的 / 镜头惯例 / 光影色调 / 节奏与剪辑 / CTA氛围 / 负向约束。
+#          每维 en 可直接拼进视频 prompt 或交给 LLM 调度。
+# 词条结构：{zh, en, note}；resolver 只取 en 拼接，zh/note 供人工阅读理解。
+
+groups:
+# ─────────────────────────────
+# 广告与宣传片
+# ─────────────────────────────
+- name: 广告与宣传片
+  en: "advertising, promo"
+  neg: "muddy colors, washed-out product, amateur framing, boring static shot"
+  words:
+  - zh: "制作目的"
+    en: "make the brand or product unforgettable and drive desire within seconds, premium brand aesthetic, polished commercial finish"
+    note: "黄金 3 秒抓住注意力，结尾促行动"
+  - zh: "镜头惯例"
+    en: "product hero shot, dramatic reveal moves, lifestyle usage montage, dynamic dolly transitions, high-speed macro, slow-motion splashes, tight close-ups of texture"
+    note: "产品为主角，亮相要惊艳"
+  - zh: "光影色调"
+    en: "premium color grade, brand-consistent key color, glossy highlights, high-end studio lighting, crisp contrast"
+    note: "统一品牌色，质感拉满"
+  - zh: "节奏与剪辑"
+    en: "fast impactful cuts, beat-synced montage, rhythmic pacing building to a strong closing brand-logo hold"
+    note: "踩音乐鼓点，收尾有记忆"
+  - zh: "CTA氛围"
+    en: "clear call to action, memorable tagline, bold end card with brand logo, emotional hook"
+    note: "结尾必须叫卖或留品牌印象"
+  - zh: "负向约束"
+    en: "avoid muddy washed-out colors, avoid ugly product lighting, avoid amateur shaky framing, avoid unclear branding"
+    note: "让产品不丢品质分"
+
+# ─────────────────────────────
+# 监控与安防
+# ─────────────────────────────
+- name: 监控与安防
+  en: "surveillance and security"
+  neg: "stylized, motion blur, artistic filters, heavy compression, unreliable colors"
+  words:
+  - zh: "制作目的"
+    en: "record the scene clearly, reliably and reviewably, provide verifiable evidence, clear timestamp, accurate framing of the covered area"
+    note: "清晰可回看、可取证"
+  - zh: "镜头惯例"
+    en: "fixed wide-angle stable view, static camera positions, continuous recording, clear timestamp overlay, sufficient ambient light, night-vision IR where needed, wide coverage angle"
+    note: "固定机位、广角覆盖、持续录制"
+  - zh: "光影色调"
+    en: "neutral accurate color for identification, high contrast for readability, low-noise image, consistent exposure"
+    note: "看清细节优先，不做美化"
+  - zh: "节奏与剪辑"
+    en: "real-time steady continuous recording, event-marked keyframe clips, no creative editing, no cut-aways"
+    note: "连续、可定位时间点"
+  - zh: "CTA氛围"
+    en: "sober authoritative surveillance tone, unobtrusive, one-to-one fidelity of the scene"
+    note: "客观还原，不作戏剧化"
+  - zh: "负向约束"
+    en: "avoid stylized filters, avoid motion blur, avoid artistically graded colors, avoid heavy compression artifacts, avoid unreliable color"
+    note: "任何美化都会损失取证价值"
+
+# ─────────────────────────────
+# 医疗与工业
+# ─────────────────────────────
+- name: 医疗与工业
+  en: "medical and industrial"
+  neg: "artistic, blurry, inaccurate colors, distorted perspective, cluttered framing"
+  words:
+  - zh: "制作目的"
+    en: "accurately document a procedure or process for training, review or quality traceability, professional process recording, precise and reproducible"
+    note: "供培训/审查/质量追溯，要求准确"
+  - zh: "镜头惯例"
+    en: "stable medium shots of the procedure, clean macro of equipment, fixed rig framing, top-down instrument views, consistent framing and angle"
+    note: "机位固定、角度一致、可复现"
+  - zh: "光影色调"
+    en: "accurate neutral white balance, clinical clean look, sharp focus, well-lit workspace, no color shift"
+    note: "白光、清晰、色彩不偏移"
+  - zh: "节奏与剪辑"
+    en: "steady reversible pacing, no flashy transitions, clear sequential steps, annotations on cue"
+    note: "步骤清晰，便于跟随"
+  - zh: "CTA氛围"
+    en: "professional clinical trust, precise and sober tone, high accountability"
+    note: "专业、严谨、可追溯"
+  - zh: "负向约束"
+    en: "avoid artistic stylization, avoid blurry footage, avoid inaccurate colors, avoid distorted perspective, avoid cluttered frames"
+    note: "专业场景容不得「好看但失真」"
+
+# ─────────────────────────────
+# AI训练（视频数据）
+# ─────────────────────────────
+- name: AI训练
+  en: "AI training video"
+  neg: "watermark, compression artifacts, uneven lighting, duplicates, off-center subjects, rapid motion"
+  words:
+  - zh: "制作目的"
+    en: "provide clean, standardized, annotation-ready video data for model training, clean standardized video data, high-quality consistent samples"
+    note: "喂模型用的干净标准数据"
+  - zh: "镜头惯例"
+    en: "stable consistent framing, one subject per clip, minimal camera motion, clear full-object views, uniform lighting, consistent subject scale"
+    note: "一镜一主体、少动、构图统一"
+  - zh: "光影色调"
+    en: "consistent standardized lighting, high clarity, uniform color reproduction, no harsh shadows, no flicker"
+    note: "光照统一，减少不确定性"
+  - zh: "节奏与剪辑"
+    en: "simple uniform pacing, no creative edits, no transitions, stable continuous clips, clear action start and end"
+    note: "动作完整、边界清晰"
+  - zh: "CTA氛围"
+    en: "neutral objective tone, one-to-one fidelity, no emotional bias"
+    note: "中性客观，便于标注"
+  - zh: "负向约束"
+    en: "avoid watermarks, avoid compression artifacts, avoid uneven lighting, avoid duplicates, avoid rapid camera motion, avoid multiple overlapping subjects"
+    note: "噪声与多样性都会污染训练"
+
+# ─────────────────────────────
+# 直播带货
+# ─────────────────────────────
+- name: 直播带货
+  en: "live commerce"
+  neg: "dull dark footage, lifeless presentation, unclear product visibility, static unengaging framing"
+  words:
+  - zh: "制作目的"
+    en: "drive real-time sales through live seeding and engagement, create buying impulse, glowing sales atmosphere, immersive encourage-to-order tone"
+    note: "种草促单、营造购买冲动与互动"
+  - zh: "镜头惯例"
+    en: "bright product close-ups, on-camera host, real-time demo, quick zooms to features, live captions, bounce energy, interactive cut-ins"
+    note: "产品清晰可见 + 主播真人互动"
+  - zh: "光影色调"
+    en: "bright vibrant saturated colors, consumer-friendly pop look, clear product illumination, flattering host lighting"
+    note: "明亮饱和，抓眼球"
+  - zh: "节奏与剪辑"
+    en: "energetic lively pacing, frequent call-to-action moments, urgent promo cut-ins, interactive lively rhythm"
+    note: "节奏快、催促感强"
+  - zh: "CTA氛围"
+    en: "urgent limited-time offer energy, clear selling points, price-and-deal overlays, shout-out engagement, trust-building"
+    note: "限时/优惠/口碑建立"
+  - zh: "负向约束"
+    en: "avoid dull dark footage, avoid lifeless flat presentation, avoid unclear product visibility, avoid boring static framing"
+    note: "气氛不到位就转化不了"

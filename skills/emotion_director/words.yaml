@@ -1,0 +1,52 @@
+happiness:
+- zh: 会心的笑
+  en: genuine smile, eyes crinkling, smile reaching eyes
+  note: 真笑：嘴角+上唇提升+下眼睑上提
+- zh: 抿嘴偷笑
+  en: suppressed smile, corners of mouth pressed
+  note: 克制笑
+sadness:
+- zh: 强忍泪水
+  en: holding back tears, eyes glistening, trembling chin, stiff upper lip
+  note: 40% 强度
+- zh: 眼眶泛红
+  en: red-rimmed eyes, tear welling up, lash glistening
+  note: 落泪前
+- zh: 无声落泪
+  en: tears rolling down cheeks, resigned gaze, slight shoulder shake
+  note: 80% 强度，克制落泪
+anger:
+- zh: 眉头紧锁
+  en: furrowed brows, jaw clenching, tense neck muscles
+  note: 压抑愤怒
+- zh: 眼神阴郁
+  en: lowered gaze, narrowed eyes, cold stare
+  note: 低强度愤怒
+surprise:
+- zh: 愣住半拍
+  en: frozen for a beat, then reacting, wide-eyed pause
+  note: 停顿控制点
+- zh: 瞳孔微张
+  en: slightly widened eyes, raised eyebrows, parted lips
+  note: 真实惊讶（克制）
+nervous:
+- zh: 紧张攥衣角
+  en: clutching hem, fidgeting with clothes, darting eyes
+  note: 肢体配合
+- zh: 害羞低头
+  en: looking down, blushing cheeks, avoiding eye contact
+  note: 害羞
+breath:
+- zh: 屏住呼吸
+  en: holding breath, chest still, tension in shoulders
+  note: 压抑瞬间
+- zh: 深吸一口气
+  en: taking a slow deep breath, exhaling with relief
+  note: 哭完/紧绷后回气
+gaze:
+- zh: 视线短暂失焦
+  en: gaze drifting out of focus, eyes losing focus
+  note: 出神/回忆
+- zh: 眼神躲闪
+  en: quickly looking away, avoiding gaze
+  note: 心虚/说谎

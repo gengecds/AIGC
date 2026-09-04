@@ -1,0 +1,27 @@
+# ═══ 视频 · 按技术维度分类 ═══
+groups:
+  - name: 2D
+    en: "2D video"
+    neg: ""
+    words:
+      - { zh: 平涂动画感, en: "flat 2D animation look" }
+  - name: 3D
+    en: "3D rendered video"
+    neg: ""
+    words:
+      - { zh: 立体光影质感, en: "3D volumetric lighting, depth" }
+  - name: 全景VR
+    en: "360 panoramic VR video"
+    neg: ""
+    words:
+      - { zh: 360度无缝, en: "360 field of view, seamless" }
+  - name: 高清超高清
+    en: "HD, 4K, 8K"
+    neg: "low res, blocky"
+    words:
+      - { zh: 高清细腻, en: "ultra high definition, sharp detail" }
+  - name: 高帧率
+    en: "high frame rate"
+    neg: ""
+    words:
+      - { zh: 丝滑流畅, en: "smooth high frame rate motion" }

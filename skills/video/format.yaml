@@ -1,0 +1,17 @@
+# ═══ 视频 · 按格式与呈现形式分类 ═══
+groups:
+  - name: 横屏长视频
+    en: "landscape 16:9 long-form"
+    neg: ""
+    words:
+      - { zh: 电影宽银幕, en: "cinematic widescreen 16:9 composition" }
+  - name: 竖屏短视频
+    en: "vertical 9:16 short video"
+    neg: ""
+    words:
+      - { zh: 全屏冲击力, en: "full-frame 9:16 impact, fast rhythm" }
+  - name: 直播流
+    en: "live stream video"
+    neg: ""
+    words:
+      - { zh: 实时互动感, en: "live broadcast energy, real-time interaction" }

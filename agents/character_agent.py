@@ -56,11 +56,14 @@ class CharacterDesignAgent(Agent):
             # 生成定妆照 - 角色正面半身
             appearance = char.get("appearance", "")
             gender = char.get("gender", "男")
+            # 注入 Skills 质量块：摄影师实拍 + 人体结构，让定妆照"人像人"且稳定可复用
+            from skills.resolver import photoreal_block, anatomy_block
             prompt = (
                 f"Portrait of {name}, {appearance}, "
                 f"{gender}, front view, upper body, "
                 f"looking at camera, detailed face, "
-                f"masterpiece, best quality, highly detailed"
+                f"{photoreal_block()}, {anatomy_block()}, "
+                f"masterpiece, best quality, highly detailed, photorealistic, 8k"
             )
 
             image_results = await self.image_provider.generate(

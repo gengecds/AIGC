@@ -1,0 +1,40 @@
+# ═══ 图片 · 场景空间一致性、人物放置与构图取景 ═══
+# 来源：抖音《只有一张正面场景图，怎么生成同空间的侧面视角？》
+#       《AI人物怎么准确放进指定区域？》
+# 定位：当画面涉及"空间/场景"时，解锁空间一致性、人物与环境的贴合、以及构图取景的观感。
+# 重构说明：原词库只有 2 组（同空间侧面视角/人物放置进指定区域），都来自单条素材。
+#          按"每个子维度 = 一套可执行约束"补齐，新增"构图与取景"层，与空间一致性、人物放置并列。
+# 词条结构：{zh, en, note}；resolver 只取 en 拼接，zh/note 供人工阅读理解。
+groups:
+  - name: 同空间侧面视角
+    en: "same-space side view"
+    neg: "warped room layout, inconsistent furniture"
+    words:
+      - { zh: 保持原有空间布局, en: "preserve the original spatial layout, keep room boundaries intact" }
+      - { zh: 固定空间关系, en: "keep fixed spatial relationships between walls, doors, windows and furniture" }
+      - { zh: 展示家具侧面, en: "show the side of furniture, reveal the side profile and wall corners" }
+      - { zh: 补全被遮挡区域, en: "fill in occluded areas, complete the previously hidden region" }
+      - { zh: 空间比例真实, en: "true spatial proportions, realistic room scale" }
+      - { zh: 透视自然, en: "natural perspective, coherent vanishing lines" }
+      - { zh: 侧面机位, en: "side-angle camera position, lateral viewpoint" }
+  - name: 人物放置进指定区域
+    en: "place character in region"
+    neg: "floating subject, mismatched scale, wrong lighting"
+    words:
+      - { zh: 锁定场景参照物, en: "lock onto a scene reference object to anchor the character" }
+      - { zh: 控制人物比例, en: "control the character's size relative to the environment" }
+      - { zh: 明确身体朝向, en: "define the character's body orientation and facing direction" }
+      - { zh: 明确视线方向, en: "define the character's gaze and line of sight" }
+      - { zh: 匹配场景光线, en: "match the scene lighting with highlights, shadows and cast shadows" }
+      - { zh: 人物与环境贴合, en: "character sits naturally grounded in the environment" }
+  - name: 构图与取景
+    en: "framing and composition"
+    neg: "flat unlayered image, no sense of depth, cluttered frame, warped perspective, dull centered product"
+    words:
+      - { zh: 纵深与分层, en: "layered composition with distinct foreground, midground and background, natural distance fade, atmospheric aerial perspective, deep spatial planes, straight-on vanishing depth" }
+      - { zh: 前景框架, en: "frame the subject through a foreground element such as a window, doorway, foliage, arch or blurred arm, create depth and draw focus to the subject" }
+      - { zh: 广角与透视, en: "wide-angle lens, exaggerated linear perspective, converging lines, expanded sense of space, subtle edge distortion" }
+      - { zh: 大远景交代镜头, en: "extreme wide establishing shot, sweeping scale, tiny subject in a vast environment, emphasize location and context" }
+      - { zh: 对称与居中构图, en: "symmetrical balanced composition, centered subject, strong architectural symmetry, stable orderly feel" }
+      - { zh: 三分法与引导线, en: "rule of thirds placement, leading lines channel the eye toward the subject, dynamic off-center composition, clear visual flow" }
+      - { zh: 留白与减法构图, en: "generous negative space, minimal clean composition, let the subject breathe, avoid clutter" }

@@ -3,6 +3,7 @@ uvicorn[standard]>=0.34.0
 sqlalchemy>=2.0.0
 alembic>=1.14.0
 httpx>=0.28.0
+requests>=2.32.0  # ComfyUI 客户端/上传图片使用
 websockets>=14.0
 pyyaml>=6.0
 aiofiles>=24.0

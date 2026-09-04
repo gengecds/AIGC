@@ -117,6 +117,39 @@ class Pipeline:
         self._review_data["rejected"] = True
         self._review_lock.set()
 
+    def submit_edit(self, data: dict):
+        """用户提交修改稿：把修改后的内容写回审核数据并放行管线"""
+        if not isinstance(data, dict):
+            data = {}
+        self._review_data["data"] = data
+        self._review_data["rejected"] = False
+        self._review_lock.set()
+        logger.info(f"[Pipeline] 📝 用户提交修改稿: 字段={list(data.keys())}")
+
+    async def _editable_review(self, agent_name: str, result: AgentResult, label: str):
+        """通用「可编辑确认断点」：落盘 → 等待 → 合并覆盖。
+
+        - 先 save_checkpoint，让前端在断点时能通过 snapshot/latest 拿到完整数据渲染编辑表单
+        - 等待用户在前端修改并提交（或直接确认/拒绝重跑）
+        - 若用户提交了 {agent_name: 修改稿}，则把修改稿「合并」覆盖到原结果（保留其它字段）
+        """
+        rd = result.data or {}
+        self.state.save_checkpoint(agent_name, result)
+        reviewed = await self.wait_for_review(f"{agent_name}_approval", rd, agent_name)
+        submitted = reviewed.get("data") or {}
+        if (
+            reviewed.get("approved")
+            and isinstance(submitted, dict)
+            and agent_name in submitted
+            and isinstance(submitted.get(agent_name), dict)
+        ):
+            # 修改稿「合并」覆盖：保留原结果其它字段，只用用户改动的字段覆盖
+            updated = dict(rd) if isinstance(rd, dict) else rd
+            updated.update(submitted.get(agent_name) or {})
+            result = AgentResult(success=True, data=updated, metadata=result.metadata)
+            logger.info(f"[Pipeline] 📝 {label}已按用户修改稿合并覆盖")
+        return result
+
     async def wait_for_review(self, reason: str, data: dict, agent_name: str):
         self._review_lock.clear()
         self._review_data = {"rejected": False, "reason": reason, "data": data}
@@ -137,6 +170,52 @@ class Pipeline:
     def agent_names(self) -> list[str]:
         return [a.name for a in self.agents]
 
+    @staticmethod
+    def _base_pipeline() -> list[str]:
+        """官方完整节点顺序（未按模型能力裁剪）。
+        intel_agent 在最前（情报前置，默认关闭，是否执行由 _effective_pipeline 的开关决定）。
+        research_agent 其次：需求 → 制作方案 → 剧本（流程升级）。
+        compose_agent 已被 video_compose_agent 取代，不在列表中（否则断点续传永远不连续）。
+        """
+        return [
+            "intel_agent", "research_agent", "script_agent", "storyboard_agent",
+            "character_agent", "image_agent", "video_agent",
+            "subtitle_agent", "video_compose_agent",
+            "audio_agent", "publish_agent",
+        ]
+
+    def _effective_pipeline(self) -> list[str]:
+        """按当前视频模型能力，动态确定实际执行的节点顺序。
+
+        核心：管线不是「写死」的，而是依据所选模型的能力（config.capabilities）自动增删节点。
+        例如 MiniMax H3 一次生成「视频+原生音频」，则无需 audio_agent 后期配音；
+        未来若出现更「全能」的模型（一次生成即含全部要素），也只需更新能力注册表即可。
+        """
+        from config.capabilities import pipeline_extra, pipeline_skip
+        from config.style_resolver import video_model_type_for_style
+        # 情报前置节点由 INTEL_ENABLED 开关控制（默认关闭）；不依赖视频模型能力
+        from intel.service import intel_enabled as _intel_enabled
+        video_model = video_model_type_for_style(default="ltx") or "ltx"
+        skip = pipeline_skip(video_model)
+        extra = pipeline_extra(video_model)
+        order = []
+        for name in self._base_pipeline():
+            if name == "intel_agent" and not _intel_enabled():
+                logger.info("[Pipeline] 情报能力未开启 (INTEL_ENABLED=False)，跳过节点 intel_agent")
+                continue
+            if name in skip:
+                logger.info(
+                    f"[Pipeline] 视频引擎 {video_model} 能力: 跳过节点 {name}"
+                )
+                continue
+            order.append(name)
+        # 预留：把模型额外需要的节点插入（默认无）
+        for name in extra:
+            if name not in order:
+                order.append(name)
+        return order
+
+
     async def run(self, agents: List[Agent], user_input: str,
                   resume: bool = False,
                   enable_review: bool = True) -> Dict:
@@ -149,14 +228,21 @@ class Pipeline:
         """
         self.agents = agents
         results = {}
-        total = len(agents)
 
-        # AGENTS_PIPELINE: 固定 Agent 列表，用于断点续传定位
-        AGENTS_PIPELINE = [
-            "script_agent", "storyboard_agent", "character_agent",
-            "image_agent", "video_agent", "subtitle_agent",
-            "video_compose_agent", "compose_agent", "publish_agent",
-        ]
+        # 动态节点顺序：按当前视频模型能力自动增删（如 H3 自带音频则跳过 audio_agent）
+        AGENTS_PIPELINE = self._effective_pipeline()
+
+        # 过滤掉「按模型能力应跳过」的 Agent（传入列表里可能仍包含，如前端固定拼接了 AudioAgent）
+        kept, dropped = [], []
+        for a in agents:
+            (kept if a.name in AGENTS_PIPELINE else dropped).append(a)
+        for a in dropped:
+            logger.info(f"[Pipeline] 按模型能力跳过节点: {a.name}")
+        if dropped:
+            agents = kept
+            self.agents = kept
+
+        total = len(AGENTS_PIPELINE)
 
         if resume:
             last_agent = self.state.get_last_completed_agent(AGENTS_PIPELINE)
@@ -195,59 +281,141 @@ class Pipeline:
             subtitle_data = self._get(results, "subtitle_agent")
 
             try:
-                if name == "script_agent":
-                    result = await retry_async(agent.run, user_input)
-                elif name == "storyboard_agent":
-                    result = await retry_async(agent.run, script_data)
-                    # 审核断点 1：分镜完成后等待确认
+                if name == "intel_agent":
+                    # 情报前置：读取素材 → 爆款拆解 → 落盘 reference_cases（无情报源时静默成功）
+                    result = await retry_async(agent.run, user_input,
+                                               max_retries=3, retry_delay=2)
+                elif name == "research_agent":
+                    # Ollama json 模式偶发输出异常：多给重试次数
+                    result = await retry_async(agent.run, user_input,
+                                               max_retries=5, retry_delay=8)
+                    # 审核断点 0：方案生成后允许用户在前端修改完善并提交，确认后再进入剧本
                     if enable_review and result.success:
                         rd = result.data or {}
-                        await self.wait_for_review(
-                            "storyboard_approval", rd, name
+                        # 先落盘，前端在断点时通过 snapshot/latest 才能拿到方案数据
+                        self.state.save_checkpoint(name, result)
+                        reviewed = await self.wait_for_review(
+                            "research_approval", rd, name
                         )
+                        submitted = reviewed.get("data") or {}
+                        sub = submitted.get("research_agent") or submitted.get("research") or {}
+                        if reviewed.get("approved") and isinstance(submitted, dict) and (submitted.get("research_agent") or submitted.get("research")):
+                            # 方案修改稿「合并」覆盖：保留原方案其它字段，只用用户改动的字段覆盖
+                            updated = dict(rd)
+                            updated.update(sub or {})
+                            result = AgentResult(success=True, data=updated, metadata=result.metadata)
+                            logger.info("[Pipeline] 📝 方案已按用户修改稿合并覆盖")
+                elif name == "script_agent":
+                    # 剧本消费研究方案（文案要点/风格/渲染引擎关键词等）
+                    research_data = self._get(results, "research_agent") or {}
+                    result = await retry_async(agent.run, user_input, research_data,
+                                               max_retries=5, retry_delay=8)
+                    # 审核断点 0：剧本/方案生成后允许用户在前端修改完善并提交
+                    if enable_review and result.success:
+                        rd = result.data or {}
+                        # 关键：先保存 checkpoint，前端在断点时通过 snapshot/latest 才能拿到剧本数据。
+                        # 否则 save_checkpoint 在断点之后才执行，前端编辑表单会因拿不到剧本而空白。
+                        self.state.save_checkpoint(name, result)
+                        reviewed = await self.wait_for_review(
+                            "script_approval", rd, name
+                        )
+                        submitted = reviewed.get("data") or {}
+                        sub = submitted.get("script_agent") or submitted.get("script") or {}
+                        sub_research = submitted.get("research_agent") or submitted.get("research") or {}
+                        if reviewed.get("approved") and isinstance(submitted, dict) and (submitted.get("script_agent") or submitted.get("script")):
+                            # 用户提交了修改稿：覆盖剧本（及其中的方案）供后续 Agent 使用
+                            updated = dict(rd)
+                            updated.update(sub or {})
+                            result = AgentResult(success=True, data=updated, metadata=result.metadata)
+                            if isinstance(sub_research, dict) and sub_research:
+                                # 方案修改稿要「合并」而不是「整体替换」：保留原方案其它字段，
+                                # 只用用户改动的字段覆盖（否则只剩 style_direction 等少数字段，其余全丢）
+                                merged_research = dict(research_data)
+                                merged_research.update(sub_research)
+                                research_result = AgentResult(
+                                    success=True, data=merged_research, metadata={}
+                                )
+                                results["research_agent"] = research_result.to_dict()
+                                self.state.save_checkpoint("research_agent", research_result)
+                                logger.info("[Pipeline] 📝 方案已按用户修改稿合并覆盖")
+                elif name == "storyboard_agent":
+                    result = await retry_async(agent.run, script_data,
+                                               max_retries=5, retry_delay=8)
+                    # 审核断点：分镜完成后等待用户确认/可编辑
+                    if enable_review and result.success:
+                        result = await self._editable_review(name, result, "分镜")
                 elif name == "character_agent":
                     result = await retry_async(agent.run, script_data)
-                    # 审核断点 2：角色定妆照确认
+                    # 审核断点：角色定妆照确认/可编辑
                     if enable_review and result.success:
-                        rd = result.data or {}
-                        await self.wait_for_review(
-                            "character_approval", rd, name
-                        )
+                        result = await self._editable_review(name, result, "定妆照")
                 elif name == "image_agent":
                     char_assets = {
                         c["name"]: c.get("asset", {})
                         for c in character_data.get("characters", []) or []
                     }
-                    # 限帧：只前 1 首集的前 2 个分镜，避免压垮 ComfyUI
-                    sb_light = copy.deepcopy(storyboard_data) if storyboard_data else storyboard_data
-                    if sb_light and sb_light.get("episodes"):
-                        for ep in sb_light["episodes"]:
-                            ep["shots"] = (ep.get("shots") or [])[:2]
-                    result = await retry_async(agent.run, sb_light, char_assets)
+                    # 本地 M4 出图速度可接受，处理全部分镜（批量超时已在 Provider 中加大）
+                    result = await retry_async(agent.run, storyboard_data, char_assets)
+                    # 审核断点：出图完成后等待用户确认/可编辑
+                    if enable_review and result.success:
+                        result = await self._editable_review(name, result, "出图")
                 elif name == "video_agent":
                     result = await retry_async(agent.run,
                         AgentResult(success=True, data={"images": image_data.get("images", {})}),
                         storyboard_data,
                     )
+                    # 审核断点：视频生成后等待用户确认/可编辑
+                    if enable_review and result.success:
+                        result = await self._editable_review(name, result, "视频")
                 elif name == "subtitle_agent":
                     result = await retry_async(agent.run, script_data, storyboard_data)
+                    # 审核断点：字幕生成后等待用户确认/可编辑
+                    if enable_review and result.success:
+                        result = await self._editable_review(name, result, "字幕")
                 elif name == "video_compose_agent":
                     result = await retry_async(agent.run,
                         AgentResult(success=True, data={"videos": video_data.get("videos", {})}),
                         AgentResult(success=True, data={"subtitles": subtitle_data.get("subtitles", [])}),
                     )
+                    # 审核断点：合成完成后等待用户确认/可编辑
+                    if enable_review and result.success:
+                        result = await self._editable_review(name, result, "合成")
                 elif name == "compose_agent":
                     result = await retry_async(agent.run,
                         AgentResult(success=True, data={"videos": video_data.get("videos", {})}),
                         AgentResult(success=True, data={"subtitles": subtitle_data.get("subtitles", [])}),
                     )
+                elif name == "audio_agent":
+                    compose_data = self._get(results, "video_compose_agent")
+                    if not compose_data:
+                        compose_data = self._get(results, "compose_agent")
+                    # 传入研究方案（BGM 情绪/场景音效）供音频合成使用
+                    research_data = self._get(results, "research_agent") or {}
+                    result = await retry_async(agent.run,
+                        AgentResult(success=True, data={"published": compose_data.get("published", [])}),
+                        AgentResult(success=True, data=script_data or {}),
+                        AgentResult(success=True, data={"srt_files": subtitle_data.get("srt_files", {})}),
+                        research_data,
+                    )
+                    # 审核断点：音频合成后等待用户确认/可编辑
+                    if enable_review and result.success:
+                        result = await self._editable_review(name, result, "音频")
                 elif name == "publish_agent":
                     compose_data = self._get(results, "video_compose_agent")
                     if not compose_data:
                         compose_data = self._get(results, "compose_agent")
+                    # 若有音频成片，用带音频的版本发布
+                    audio_data = self._get(results, "audio_agent")
+                    published = compose_data.get("published", [])
+                    if audio_data and audio_data.get("final_video"):
+                        for p in published:
+                            p["final_path"] = audio_data["final_video"]
                     result = await retry_async(agent.run,
-                        AgentResult(success=True, data={"published": compose_data.get("published", [])})
+                        AgentResult(success=True, data={"published": published})
                     )
+                    # 审核断点：发布前等待用户确认/可编辑
+                    if enable_review and result.success:
+                        result = await self._editable_review(name, result, "发布")
                 else:
                     # 未知 Agent ——尝试直接 run
                     result = await self._run_unknown_agent(agent, AGENTS_PIPELINE, name, results)

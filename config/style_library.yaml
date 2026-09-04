@@ -1,0 +1,37 @@
+# 风格词库 —— AI 漫剧 / 产品广告 渲染引擎与光影关键词
+# 作用：research_agent 生成制作方案时，从这里挑选关键词注入文案与出图 prompt。
+# 进化机制：每次生成后 LLM 会建议候选新词（见方案 candidate_words 字段），
+#          人工确认后直接追加到下方列表即可，下次生成自动生效（无需改代码）。
+#
+# 格式说明：
+#   zh: 中文关键词（用于文案/方案展示，前端也会显示）
+#   en: 英文关键词（用于 SD/ComfyUI 出图 prompt，英文更稳）
+#   注释: 说明该词适用场景（可写可不写）
+
+render_engine:            # 渲染引擎关键词（对应"黑神话光影质感/建模细节"等诉求）
+  - zh: "虚幻引擎5.3 Lumen 全局光照"
+    en: "unreal engine 5 lumen global illumination"
+    note: "黑神话光影质感"
+  - zh: "Nanite 虚拟几何体影视级资产"
+    en: "nanite virtual geometry cinematic assets"
+    note: "建模细节拉满"
+  - zh: "Octane X 渲染光谱光照"
+    en: "octane render spectral lighting, film-grade materials"
+    note: "电影级材质节点和光效"
+  - zh: "Redshift RT 微秒面散射"
+    en: "redshift subsurface scattering, photorealistic skin texture"
+    note: "写实到毛孔级别的质感"
+  - zh: "V-Ray 6 全局光照物理相机"
+    en: "v-ray 6 global illumination, physical camera"
+    note: "室内外光环境模拟"
+
+lighting:                 # 光影强化关键词（对应"真实反射/柔和阴影/物理光影"诉求）
+  - zh: "光线追踪反射"
+    en: "ray-traced reflections"
+    note: "金属铠甲真实反射环境"
+  - zh: "光线追踪柔和阴影"
+    en: "ray-traced soft shadows"
+    note: "阴影边缘柔和自然"
+  - zh: "路径追踪"
+    en: "path tracing, physically correct lighting"
+    note: "整张图的物理光影正确"

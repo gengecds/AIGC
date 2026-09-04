@@ -1,0 +1,14 @@
+# ═══ 图片 · 按文件格式分类（位图/矢量）═══
+groups:
+  - name: 位图点阵
+    en: "raster bitmap image"
+    neg: "low resolution, pixelated, blurry"
+    words:
+      - { zh: 高像素细节, en: "high pixel density, crisp edges" }
+      - { zh: 照片级色彩深度, en: "photographic color depth, smooth gradients" }
+  - name: 矢量图
+    en: "vector graphic, clean lines"
+    neg: "raster artifacts, noise, blur"
+    words:
+      - { zh: 干净锐利线条, en: "crisp vector lines, flat clean shapes" }
+      - { zh: 无限放大不失真, en: "scalable flat design, no pixelation" }

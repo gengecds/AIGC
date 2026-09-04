@@ -1,0 +1,165 @@
+# ═══ 视频 · 内容题材 → 画面语言体系 ═══
+# 定位：当整条视频属于某类题材时，解锁"该题材的成套画面语言"，而不是一句空话。
+# 重构说明：原词库每类只有 1~2 个模糊短语（如"电影级运镜""综艺活力节奏"），
+#           AI 拿到这种抽象词只能自由发挥，根本掌控不了画面。
+#          现按"每个题材 = 一套完整可执行的导演配方"重写：
+#          镜头惯例(怎么拍) / 光影色调(怎么打光调色) / 节奏与剪辑 / 构图特色 /
+#          氛围与配乐(听感) / 负向约束(禁什么)。每维的 en 可直接拼进 LLM 或视频 prompt。
+# 词条结构：{zh, en, note}；resolver 只取 en 拼接，zh/note 供人工阅读理解。
+
+groups:
+# ─────────────────────────────
+# 影视与综艺
+# ─────────────────────────────
+- name: 影视与综艺
+  en: "film, drama, variety show"
+  neg: "flat TV lighting, washed-out colors, static dull framing, stiff camera"
+  words:
+  - zh: "镜头惯例"
+    en: "controlled crane sweeps and smooth dolly moves, dramatic low and high angles, slow-motion on key emotional moments, shallow depth-of-field isolation, wide establishing shots"
+    note: "戏剧内容用克制运镜+关键时刻升格；综艺用更活的手持动态"
+  - zh: "光影色调"
+    en: "moody dramatic lighting with deep shadows, warm tungsten key vs cool fill, high-contrast cinematic color grade, filmic contrast, cinematic color science"
+    note: "影剧=电影感强对比；综艺=明亮均匀棚光+彩色氛围灯"
+  - zh: "节奏与剪辑"
+    en: "controlled slow burn for drama, punchy fast cuts for variety, rhythmic editing matched to emotion, dissolves on time passage"
+    note: "戏靠留白，综艺靠快节奏"
+  - zh: "构图特色"
+    en: "rule of thirds, layered foreground-midground-background, negative space for drama, dynamic asymmetry and slight dutch angle for variety"
+    note: "层次+留白制造电影感，活力靠不对称"
+  - zh: "氛围与配乐"
+    en: "swelling orchestral score for drama, upbeat pop theme and punchy sound design for variety"
+    note: "配乐直接决定气质"
+  - zh: "负向约束"
+    en: "avoid flat sitcom lighting, avoid washed-out desaturated image, avoid static lifeless framing"
+    note: "把「影剧感」压成「广告片」的反面，都该禁"
+
+# ─────────────────────────────
+# 新闻与资讯
+# ─────────────────────────────
+- name: 新闻与资讯
+  en: "news and information"
+  neg: "stylized, cinematic overdo, dutch angle, heavy color grade, dramatic bokeh, shaky camera"
+  words:
+  - zh: "镜头惯例"
+    en: "stable tripod or gyro-static framing, medium shot of the presenter, over-the-shoulder interview, cutaway B-roll inserts, wide establishing of the location, controlled zoom-in to a detail"
+    note: "稳字当头，禁炫技运镜"
+  - zh: "光影色调"
+    en: "neutral white balance, flat even documentary lighting, realistic natural skin tones, minimal color grading, no stylized effects"
+    note: "真实可信，不做风格化"
+  - zh: "节奏与剪辑"
+    en: "steady informative pacing, clean hard cuts between segments, no flashy transitions, captions and graphics on cue"
+    note: "信息密度优先，节奏平稳"
+  - zh: "构图特色"
+    en: "stable centered presenter framing, balanced over-the-shoulder composition, clean uncluttered foreground for graphics"
+    note: "版面干净，方便配字幕/图表"
+  - zh: "氛围与配乐"
+    en: "sober neutral tone, minimal subtle bed music under narration, authoritative credible voice"
+    note: "克制、可信、不煽情"
+  - zh: "负向约束"
+    en: "avoid dramatic dutch angles, avoid heavy cinematic color grade, avoid stylized glitch effects, avoid unnecessary motion"
+    note: "真实、客观、不夸张"
+
+# ─────────────────────────────
+# 生活与Vlog
+# ─────────────────────────────
+- name: 生活与Vlog
+  en: "lifestyle vlog"
+  neg: "overly polished, stiff acting, cold corporate lighting, fake perfect skin"
+  words:
+  - zh: "镜头惯例"
+    en: "natural handheld camera with intentional subtle shake, selfie framing, POV shots, casual walking-follow shots, candid wide scenes, occasional tight close-ups of details like coffee or food"
+    note: "日常感靠手持与第一视角"
+  - zh: "光影色调"
+    en: "warm cosy natural light, golden-hour glow, bright airy interiors, soft pastel color grade, authentic skin texture"
+    note: "暖、亲、真实"
+  - zh: "节奏与剪辑"
+    en: "relaxed breezy conversational pacing, playful jump cuts, quick text overlays, casual vlog-style transitions"
+    note: "像朋友聊天，不端着"
+  - zh: "构图特色"
+    en: "relaxed amateur-friendly framing, front-facing selfie composition, casual grazing the rule of thirds, capturing real clutter for authenticity"
+    note: "保留生活感，不追求完美构图"
+  - zh: "氛围与配乐"
+    en: "warm lo-fi acoustic or upbeat indie track, personal friendly narration, authentic ambient sound"
+    note: "让人有代入感的日常氛围"
+  - zh: "负向约束"
+    en: "avoid stiff corporate polish, avoid overly staged perfect scenes, avoid cold flat studio lighting, avoid over-processed skin"
+    note: "太完美反而假"
+
+# ─────────────────────────────
+# 知识与教育
+# ─────────────────────────────
+- name: 知识与教育
+  en: "knowledge and education"
+  neg: "distracting motion, cluttered background, grainy low light, dramatic stylization, unreadable text"
+  words:
+  - zh: "镜头惯例"
+    en: "stable clear framing, medium shots of the presenter, tight close-ups of objects or diagrams, top-down desk-table shots, screen capture overlays, slide-supported composition"
+    note: "讲清重点优先，镜头稳定"
+  - zh: "光影色调"
+    en: "bright even neutral lighting, high readability, soft shadows, clean white-balanced color, uncluttered background"
+    note: "清晰、干净、不抢焦点"
+  - zh: "节奏与剪辑"
+    en: "measured explanatory pacing, seamless transitions tied to concept, synchronized with narration, diagrams and captions appearing on cue"
+    note: "跟讲解走，可反复理解"
+  - zh: "构图特色"
+    en: "clear subject separation, generous negative space for overlaid diagrams or captions, balanced composition keeping presenter readable while content is visible"
+    note: "给字幕/图示留位"
+  - zh: "氛围与配乐"
+    en: "focused trustworthy tone, soft minimal background music, clear calm narration"
+    note: "可信、专注、不燥"
+  - zh: "负向约束"
+    en: "avoid distracting handheld shake, avoid busy cluttered backgrounds, avoid low-light grain, avoid excessive stylization that reduces clarity"
+    note: "内容清晰高于一切"
+
+# ─────────────────────────────
+# 娱乐与游戏
+# ─────────────────────────────
+- name: 娱乐与游戏
+  en: "entertainment, gaming"
+  neg: "bland flat lighting, slow lifeless pacing for gameplay, boring static framing, muddy colors"
+  words:
+  - zh: "镜头惯例"
+    en: "dynamic gamer POV, fast whip pans, rapid punchy cuts, exaggerated reaction shots, first-person gameplay capture, sweeping establishing of virtual worlds, slow-motion on satisfying moments, camera shake on impacts"
+    note: "高能、爆点、节奏拉满"
+  - zh: "光影色调"
+    en: "vibrant saturated neon colors, high contrast, stylized glow and bloom, bold dynamic lighting"
+    note: "饱和+高对比，视觉刺激"
+  - zh: "节奏与剪辑"
+    en: "high-energy rapid-fire pacing, beat-synced cuts, explosive VFX transitions, quick reaction inserts"
+    note: "跟音乐鼓点走，够燃"
+  - zh: "构图特色"
+    en: "dynamic off-center action framing, first-person immersive perspective, dramatic depth, high-contrast silhouettes"
+    note: "游戏质感+沉浸感"
+  - zh: "氛围与配乐"
+    en: "hype adrenaline energy, high-energy electronic or cinematic trailer score, punchy sound effects"
+    note: "燃、爽、有记忆点"
+  - zh: "负向约束"
+    en: "avoid boring static camera, avoid flat washed-out colors, avoid slow dragging pacing, avoid muddy low-contrast image"
+    note: "游戏/娱乐要的就是爽感"
+
+# ─────────────────────────────
+# 科技与数码
+# ─────────────────────────────
+- name: 科技与数码
+  en: "tech and digital"
+  neg: "low quality, noisy image, messy background, wonky reflections, amateur framing"
+  words:
+  - zh: "镜头惯例"
+    en: "macro shots of device details, precise product glides, sleek reveal moves, shallow depth-of-field on device surfaces, tight screen close-ups, clean studio pans"
+    note: "细节揭示式运镜，突出质感"
+  - zh: "光影色调"
+    en: "premium studio lighting, soft controlled reflections on metallic surfaces, bold accent lighting, cool crisp minimal color grade, deep blacks"
+    note: "高级、克制、有光泽"
+  - zh: "节奏与剪辑"
+    en: "sleek smooth controlled pacing with peak reveal moments, aligned with product feature reveals, elegant slow-motion on key shots"
+    note: "节奏优雅，踩在产品看点"
+  - zh: "构图特色"
+    en: "clean minimal composition with generous negative space, diagonal product placement, crisp geometric framing, subtle depth"
+    note: "简洁、高级、留白"
+  - zh: "氛围与配乐"
+    en: "premium refined futuristic tone, sleek electronic score, subtle cinematic sound design"
+    note: "科技感、高级感"
+  - zh: "负向约束"
+    en: "avoid noisy low-resolution image, avoid cluttered messy backgrounds, avoid amateur shaky framing, avoid reflective inaccuracies on metal"
+    note: "质感优先，细节要经得起放大"

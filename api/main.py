@@ -11,6 +11,7 @@ load_dotenv()  # 加载 .env 到环境变量
 
 from fastapi import FastAPI
 from fastapi.staticfiles import StaticFiles
+from fastapi.middleware.cors import CORSMiddleware
 
 from db.database import get_engine, close_engine
 
@@ -56,6 +57,15 @@ app = FastAPI(
     lifespan=lifespan,
 )
 
+# 前端/本地工具跨源访问（Vite dev server、file:// 打开等场景）
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
+
 
 # ── 路由（占位） ─────────────────────
 
@@ -80,11 +90,37 @@ output_dir = Path(__file__).parent.parent / "storage" / "output"
 os.makedirs(str(output_dir), exist_ok=True)
 app.mount("/storage/output", StaticFiles(directory=str(output_dir)), name="output")
 
+# ComfyUI 输出目录（SD/LTX 生成的图片视频直接落在这里）
+comfyui_output_dir = Path(os.environ.get(
+    "COMFY_OUTPUT_DIR",
+    "/Users/a715/git/ComfyUI/ComfyUI-Installs/ComfyUI/ComfyUI/output",
+))
+os.makedirs(str(comfyui_output_dir), exist_ok=True)
+app.mount("/comfyui-output", StaticFiles(directory=str(comfyui_output_dir)), name="comfyui-output")
+
 
 # ── 导入路由 ─────────────────────────
 
 from api.routes.pipeline import register_pipeline_routes
 register_pipeline_routes(app)
+
+from api.routes.intel import register_intel_routes
+register_intel_routes(app)
+
+from api.routes.skills import register_skills_routes
+register_skills_routes(app)
+
+from api.routes.auth import router as auth_router
+app.include_router(auth_router)
+
+# 音频域：参考音频上传 / 音色克隆（域 B 独立）
+from api.routes.audio_router import router as audio_router
+app.include_router(audio_router)
+
+# Pipeline SSE 进度事件流（域 D 独立，供前端 5 步向导式 Review UI 订阅）
+# 端点：GET /pipeline/events?run_id=xxx （__demo__ 推假数据方便联调）
+from api.routes.pipeline_events_router import router as pipeline_events_router
+app.include_router(pipeline_events_router)
 
 
 if __name__ == "__main__":

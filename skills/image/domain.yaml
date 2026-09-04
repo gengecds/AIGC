@@ -1,0 +1,27 @@
+# ═══ 图片 · 按应用领域与功能分类 ═══
+# 这类图片对"准确性/专业度"要求高于艺术性，负向词里禁掉过度风格化。
+groups:
+  - name: 医疗影像
+    en: "medical imaging, diagnostic clarity"
+    neg: "stylized, artistic, blurry, artifacts"
+    words:
+      - { zh: 高清晰解剖细节, en: "high clarity anatomical detail, clean scan" }
+      - { zh: 专业医学术语, en: "clinical grayscale, precise boundaries" }
+  - name: 遥感与测绘
+    en: "remote sensing and mapping"
+    neg: "distorted, low resolution"
+    words:
+      - { zh: 卫星云图, en: "satellite imagery, cloud cover, accurate geolocation" }
+      - { zh: 地形等高线, en: "topographic map, contour lines, terrain relief" }
+  - name: 工业与科学
+    en: "industrial and scientific"
+    neg: "blurry, artistic, noise"
+    words:
+      - { zh: 材料结构放大, en: "material microstructure magnification, sharp" }
+      - { zh: 精密仪器, en: "precision scientific instrument, clean render" }
+  - name: UI/UX 界面
+    en: "UI/UX screen design"
+    neg: "low contrast, unclear typography, blurry"
+    words:
+      - { zh: 干净现代界面, en: "clean modern UI layout, crisp typography" }
+      - { zh: 高保真交互, en: "high-fidelity screen mockup, consistent spacing" }

@@ -44,6 +44,18 @@ class ImageProvider(ABC):
 class VideoProvider(ABC):
     """视频生成"""
 
+    # 引擎标识（与 config.capabilities 的键一致），子类按具体模型覆写
+    video_model_type: str = "ltx"
+
+    @property
+    def supports_native_audio(self) -> bool:
+        """该视频模型是否自带原生音频（如 MiniMax H3 全模态联合 latent）。
+
+        管线据此决定是否还需要 audio_agent 后期配音+BGM 合成。
+        """
+        from config.capabilities import native_audio
+        return native_audio(self.video_model_type)
+
     @abstractmethod
     async def generate(self, input_image: str, prompt: str,
                        duration: int = 5, **kwargs) -> str:

@@ -2,6 +2,8 @@
 
 AI 驱动的动漫视频自动生成管线：**剧本 → 分镜 → 角色定妆 → 出图 → 图生视频 → 字幕 → 合成**
 
+**全本地运行**：LLM、出图、视频、合成全部在本机（MacBook Air M4）完成，不依赖任何外部 API 或云 GPU。
+
 ## 整体架构
 
 ```
@@ -17,106 +19,98 @@ AI 驱动的动漫视频自动生成管线：**剧本 → 分镜 → 角色定�
 └───────┼──────────────┼────────────────┼──────────┘
         │              │                │
         ▼              ▼                ▼
-   DeepSeek API   ComfyUI API      FFmpeg
-                  (SD + HyVideo)
+   Ollama 本地     ComfyUI 本地      FFmpeg
+   (qwen3:8b)     (SD + LTX-Video)
 ```
 
 ## 管线流程
 
 | 步骤 | Agent | 功能 | 实现 |
 |------|-------|------|------|
-| 1 | ScriptAgent | 根据故事梗概生成完整剧本（多集+对话） | DeepSeek |
-| 2 | StoryboardAgent | 剧本 → 分镜表（12-18个分镜/集） | DeepSeek |
-| 3 | CharacterDesignAgent | 角色定妆照生成 | ComfyUI SD |
-| 4 | ImageGenAgent | 批量分镜出图 | ComfyUI SD (异步批量) |
-| 5 | VideoGenAgent | 图→视频生成 | ComfyUI HyVideo (异步批量) |
+| 1 | ScriptAgent | 根据故事梗概生成完整剧本 | Ollama qwen3:8b（本地） |
+| 2 | StoryboardAgent | 剧本 → 分镜表 | Ollama qwen3:8b（本地） |
+| 3 | CharacterDesignAgent | 角色定妆照生成 | ComfyUI + SD1.5（本地） |
+| 4 | ImageGenAgent | 批量分镜出图 | ComfyUI + SD1.5（本地） |
+| 5 | VideoGenAgent | 图→视频生成 | ComfyUI + LTX-Video（本地） |
 | 6 | SubtitleAgent | SRT 字幕生成 | 本地规则引擎 |
-| 7 | ComposeAgent | 帧→MP4 合成 + 字幕烧录 | FFmpeg |
+| 7 | VideoComposeAgent | 视频拼接 + 字幕烧录 | FFmpeg |
 
-## 快速开始
+## 快速开始（本地）
 
-### 1. GPU 端（AutoDL）
+### 1. 启动 ComfyUI（端口 8189）
 
 ```bash
-# 启动 ComfyUI（端口 8188）
-cd /root/ComfyUI
-python main.py --listen 0.0.0.0 --port 8188
-
-# 本地建立 SSH 隧道
-ssh -L 18188:localhost:8188 root@your-instance -p your_port
+cd /Users/a715/git/ComfyUI/ComfyUI-Installs/ComfyUI/ComfyUI
+nohup ./.venv/bin/python main.py --listen 127.0.0.1 --port 8189 &
+# 验证: curl http://127.0.0.1:8189/api/system/stats
 ```
 
-### 2. 本地运行测试
+### 2. 启动 Ollama（brew 服务已常驻）
 
 ```bash
-# 安装依赖
-pip install httpx openai python-dotenv
-
-# 运行全链路测试
-python3 pipeline/test_real_full.py
-
-# 单独测试 SD 出图
-python3 test_comfyui_pipeline.py
-
-# 单独测试 HunyuanVideo
-python3 test_hunyuanvideo.py
+ollama serve        # 若未运行
+ollama list         # 应显示 qwen3:8b
 ```
 
-### 3. 预览前端
+### 3. 启动后端 API（端口 8888）
 
 ```bash
-python3 scripts/serve.py
-# 浏览器打开 http://localhost:4333
+cd /Users/a715/git/AIGC
+nohup .venv/bin/python -m uvicorn api.main:app --host 127.0.0.1 --port 8888 &
+# 验证: curl http://127.0.0.1:8888/health → {"status":"ok"}
+```
+
+### 4. 运行测试
+
+```bash
+# 轻量管线测试（Mock，秒级）
+.venv/bin/python tests/test_pipeline_light.py
+
+# 全管线（真实 LLM + 出图 + 视频，需人工审核确认）
+curl -X POST http://127.0.0.1:8888/api/v1/pipeline/run \
+  -H "Content-Type: application/json" \
+  -d '{"input": "一句话故事梗概"}'
 ```
 
 ## 项目结构
 
 ```
 ├── agents/                  # 7个 Agent
-│   ├── script_agent.py      # Agent 1: 剧本生成
-│   ├── storyboard_agent.py  # Agent 2: 分镜
-│   ├── character_agent.py   # Agent 3: 角色定妆
-│   ├── image_agent.py       # Agent 4: 批量出图
-│   ├── video_agent.py       # Agent 5: 图生视频
-│   ├── subtitle_agent.py    # Agent 6: 字幕
-│   ├── compose_agent.py     # Agent 7: 合成
-│   └── base.py              # Agent 基类
-├── providers/               # 外部服务适配层
-│   ├── comfyui/             # ComfyUI API 客户端
-│   │   ├── client.py        # Queue/Watch/History API
-│   │   └── workflow_*.json  # SD/HyVideo 工作流
-│   ├── comfyui_provider.py  # ComfySDImage + ComfyHyVideo Provider
-│   ├── llm.py               # LLM Provider (DeepSeek/Ollama)
-│   └── utils.py             # 帧→视频合成工具
-├── pipeline/                # 管线调度
-│   ├── scheduler.py         # Pipeline + PipelineState
-│   └── test_real_full.py    # 全链路真 Provider 测试
+├── providers/               # 引擎适配层（Ollama / ComfyUI / Mock）
+│   ├── llm.py               # OllamaProvider（本地 LLM）
+│   ├── comfyui_provider.py  # ComfySDImageProvider + ComfyLTXVideoProvider
+│   └── comfyui/client.py    # ComfyUI REST + WebSocket 客户端
+├── pipeline/                # 管线调度 + checkpoint 断点续传
+├── api/                     # FastAPI 后端
 ├── frontend/                # Web 前端
-│   ├── index.html / app.js / style.css  # 正式前端
-│   └── review.html          # 成果预览页
-├── scripts/
-│   ├── serve.py             # 本地预览服务器
-│   └── download_videos.py   # GPU→本地视频下载
-├── workflows/               # ComfyUI 工作流 JSON
-├── storage/                 # 产出
-│   ├── output/              # SD 出图
-│   ├── videos/              # 合成视频
-│   └── checkpoints/         # Pipeline 断点
-└── docs/                    # 设计文档
+├── workflows/               # SD 工作流 JSON
+├── config/config.yaml       # 配置中心（本地模式）
+└── docs/                    # 设计文档（含本地部署方案）
 ```
 
 ## 环境变量
 
 ```env
-DEEPSEEK_API_KEY=your_key_here
+# 默认读 config.yaml，通常无需设置
+# IMAGE_PROVIDER=comfyui
+# VIDEO_PROVIDER=comfyui
+# LLM_PROVIDER=ollama
 ```
+
+## 依赖模型（本地）
+
+| 模型 | 位置 | 用途 |
+|:---|:---|:---|
+| Ollama qwen3:8b | ~/.ollama | 剧本/分镜 LLM |
+| SD1.5 (v1-5-pruned-emaonly) | SD-WebUI 共享 | 出图 |
+| LTX-Video 2B + t5xxl | ComfyUI-Shared | 图生视频 |
+
+> 详见 [docs/本地环境部署方案_v1.md](docs/本地环境部署方案_v1.md)
 
 ## 已验证
 
-- ✅ DeepSeek 剧本+分镜生成
-- ✅ ComfyUI SD 出图（512×512，Realistic-Vision-V5.1）
-- ✅ HunyuanVideo 图生视频（25帧，fp8_e4m3fn_fast）
-- ✅ 异步批量提交 + 后台轮询收集
-- ✅ 全链路真 Provider 测试（16 分镜完整通过）
-- ✅ 帧 → WebM 视频合成
-- ✅ Web 前端预览
+- ✅ Ollama qwen3:8b 剧本+分镜生成（全本地）
+- ✅ ComfyUI SD1.5 出图（512×512，MPS）
+- ✅ LTX-Video 图生视频（MPS，替代 HunyuanVideo）
+- ✅ 7 Agent 全管线真实视频输出（剧本→分镜→定妆→出图→视频→字幕→合成）
+- ✅ 全本地运行，无任何外部 API/云 GPU 依赖

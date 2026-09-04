@@ -1,0 +1,197 @@
+# ═══ 图片 · 内容主题分类词库 ═══
+# 定位：当分镜/写真属于某类题材时，解锁"该题材的通用完整细节块"。
+# 修复说明：原词条把不同景别（特写/合影/证件照）串成一条，语义相互冲突；
+#           且每类只有 1~2 个短语，AI 缺参数只能自由发挥。
+#           现按"每一类=一种可独立出图的完整题材"重写，词条内 en 可无缝叠加，不冲突。
+# 词条结构：{zh, en, note}；resolver 只取 en 拼接，zh/note 供人工阅读理解。
+
+groups:
+# ─────────────────────────────
+# 人像：单人电影肖像特写
+# ─────────────────────────────
+- name: 人物与肖像·单人电影特写
+  en: "cinematic single-subject close-up portrait"
+  neg: "extra fingers, deformed face, plastic skin, dead eyes, floating head, inconsistent identity, anime, illustration, cropped forehead"
+  words:
+  - zh: "景别与构图"
+    en: "close-up head-and-shoulders framing, subject slightly off-center with rule of thirds, eye-level camera angle, vertical 3:4 composition"
+    note: "特写+三分构图，避免正面死板摆拍"
+  - zh: "镜头与景深"
+    en: "shot on 85mm portrait lens f/1.8, shallow depth of field, creamy smooth bokeh, tight focus on the eyes"
+    note: "人像黄金焦段，背景奶油虚化"
+  - zh: "光线方向"
+    en: "soft Rembrandt key light from camera-left, subtle fill on the shadow side, delicate rim light tracing hair and shoulder"
+    note: "明确主光方向，避免平光"
+  - zh: "皮肤真实质感"
+    en: "natural skin texture with visible pores, fine skin detail, realistic subsurface scattering, subtle natural blush, healthy matte finish"
+    note: "防塑料脸，油光适可而止"
+  - zh: "眼神与微表情"
+    en: "sharp focus on both eyes, bright catchlight in each pupil, relaxed facial muscles, naturally composed expression"
+    note: "眼神有神，面部不僵硬"
+  - zh: "头发细节"
+    en: "defined individual hair strands, delicate flyaway hairs, realistic sheen on hair surface"
+    note: "发丝根根分明提升真实感"
+  - zh: "背景分离"
+    en: "blurred neutral background, smooth tonal separation, subject clearly lifted from the backdrop"
+    note: "主体与背景分层"
+  - zh: "画质后缀"
+    en: "photorealistic, 8k, high dynamic range, cinematic film look"
+    note: "整体成片质感"
+
+# ─────────────────────────────
+# 人像：群体合影
+# ─────────────────────────────
+- name: 人物与肖像·群体合影
+  en: "group portrait"
+  neg: "extra fingers, deformed face, plastic skin, identical clone faces, duplicate face, floating subjects, inconsistent scale, anime"
+  words:
+  - zh: "景别与构图"
+    en: "medium-wide group shot, multiple adult subjects arranged in a loose layered composition, everyone framed from waist up"
+    note: "全身/半身群体，层次错落"
+  - zh: "站位与层次"
+    en: "subjects staggered in depth, clear foreground and background rows, overlapping shoulders, no one fully behind another"
+    note: "前后错位+肩膀重叠，层次自然"
+  - zh: "统一光线"
+    en: "soft even studio lighting, gentle key light directed to face each subject, consistent shadow direction"
+    note: "光线方向统一，否则人群割裂"
+  - zh: "人物一致性"
+    en: "consistent facial identity across all subjects, natural synchronized expressions, believable interaction"
+    note: "一致性锚点+自然互动"
+  - zh: "景深控制"
+    en: "moderate depth of field keeping all faces sharp, soft background falloff"
+    note: "群里人脸都要清晰"
+  - zh: "皮肤统一"
+    en: "natural skin texture with visible pores on every face, consistent skin tone gradient"
+    note: "同批人肤色质感一致"
+  - zh: "背景与画质"
+    en: "clean neutral studio backdrop, seamless tonal gradient, photorealistic, 8k, high dynamic range"
+    note: "干净棚背景+整体质感"
+  - zh: "眼神复用"
+    en: "bright catchlight in each subject's eyes, natural gaze toward the camera"
+    note: "防人群眼神空洞"
+
+# ─────────────────────────────
+# 人像：棚拍证件照质感
+# ─────────────────────────────
+- name: 人物与肖像·棚拍证件照质感
+  en: "clean studio headshot"
+  neg: "extra fingers, deformed face, plastic skin, harsh shadows, busy background, tilt, blurry face, watermark, text"
+  words:
+  - zh: "景别与构图"
+    en: "clean studio headshot, chest-up framing, subject centered and forward-facing, symmetrical horizontal composition"
+    note: "端正居中，头肩构图"
+  - zh: "棚拍光线"
+    en: "even softbox key light from the front, soft fill light, gentle catchlight in both eyes, no harsh shadows"
+    note: "正脸均匀柔光"
+  - zh: "皮肤与妆感"
+    en: "natural skin texture with visible pores, even complexion, matte finish, subtle natural makeup"
+    note: "防油腻脸，质感真实"
+  - zh: "表情与身姿"
+    en: "relaxed neutral expression, slight confident smile, perfectly upright shoulders, head level"
+    note: "端正自然，不含驼背"
+  - zh: "镜头焦段"
+    en: "shot on 85mm lens f/4, uniform crisp focus across the face, no perspective distortion"
+    note: "85mm 端正面无畸变"
+  - zh: "背景纯净"
+    en: "plain neutral grey seamless background, subtle smooth gradient, no texture, no hard edge"
+    note: "纯灰渐变无缝背景"
+  - zh: "画质后缀"
+    en: "professional corporate headshot, sharp focus, photorealistic, 8k"
+    note: "商业证件质感"
+
+# ─────────────────────────────
+# 自然与风景
+# ─────────────────────────────
+- name: 自然与风景
+  en: "natural scenery, landscape photography"
+  neg: "cartoon, illustration, painting, unnatural colors, oversaturated sky, stretched horizon"
+  words:
+  - zh: "云雾缭绕的山脉"
+    en: "misty mountain range, dramatic layered peaks, drifting fog through valleys, soft atmospheric haze"
+    note: "山体被雾分层"
+  - zh: "金色日落海湾"
+    en: "golden hour over a calm sea, warm low sunlight, glittering water reflections, soft horizon glow"
+    note: "黄金时刻镜面反光"
+  - zh: "原始森林光线"
+    en: "sunlight filtering through a dense forest, god rays piercing the canopy, dappled light on mossy ground"
+    note: "丁达尔光束+斑驳光"
+  - zh: "镜头与质感"
+    en: "shot on 24mm wide-angle lens, deep depth of field, high dynamic range, photorealistic, 8k"
+    note: "大景深广角，宽容度"
+
+# ─────────────────────────────
+# 动植物
+# ─────────────────────────────
+- name: 动植物
+  en: "wildlife and plant macro photography"
+  neg: "anatomical errors, extra limbs, wrong teeth, plastic feathers, cartoon, blurry subject"
+  words:
+  - zh: "动物眼神清晰"
+    en: "sharp animal eyes, detailed iris and pupil, bright catchlight in the eye, photorealistic"
+    note: "动物眼神光决定成败"
+  - zh: "毛发质感"
+    en: "detailed fur or feather texture, individual strands, realistic sheen and direction, fine undercoat"
+    note: "毛发根根分明"
+  - zh: "微距花卉"
+    en: "macro flower, dewdrops on petals, fine petal texture, pollen on stamen, soft bokeh background"
+    note: "露珠+花瓣绒毛细节"
+  - zh: "镜头与景深"
+    en: "shot on 100mm macro lens f/2.8, shallow depth of field, sharp subject, creamy bokeh, high detail"
+    note: "微距大光圈"
+
+# ─────────────────────────────
+# 建筑与城市
+# ─────────────────────────────
+- name: 建筑与城市
+  en: "architecture and urban photography"
+  neg: "wonky perspective, floating buildings, twisted windows, cartton, blurry facades, text"
+  words:
+  - zh: "现代摩天楼"
+    en: "modern skyscraper, sleek glass facade, reflective windows, dramatic low-angle perspective, clean geometric lines"
+    note: "玻璃幕墙+低角度透视"
+  - zh: "城市街景"
+    en: "busy city street, leading lines down the road, signage, depth with layered buildings, natural traffic blur"
+    note: "引导线+纵深"
+  - zh: "建筑光影"
+    en: "golden hour light on the facade, long shadows, high contrast, rich tonal range, photorealistic"
+    note: "黄金时刻层次"
+  - zh: "镜头与质感"
+    en: "shot on 24mm wide lens, corrected vertical lines, high dynamic range, 8k, sharp detail"
+    note: "广角校正垂直线"
+
+# ─────────────────────────────
+# 商品与静物
+# ─────────────────────────────
+- name: 商品与静物
+  en: "product and still life photography"
+  neg: "text, watermark, deformed object, cloned artifact, floating object, oversaturated color"
+  words:
+  - zh: "产品广告质感"
+    en: "commercial product shot, clean seamless background, sharp focus on the product, studio softbox lighting, subtle reflections"
+    note: "商业棚拍质感"
+  - zh: "日常静物"
+    en: "arranged still life, soft window light, natural shadows, tactile material texture"
+    note: "柔和窗光+材质纹理"
+  - zh: "材质与倒影"
+    en: "physically based materials, correct reflections, depth of field with product sharp and background soft"
+    note: "材质真实+浅景深"
+  - zh: "画质后缀"
+    en: "professional product photography, photorealistic, 8k, high dynamic range"
+    note: "电商主图质感"
+
+# ─────────────────────────────
+# 艺术与抽象
+# ─────────────────────────────
+- name: 艺术与抽象
+  en: "artistic and abstract image"
+  neg: "low quality, blurry, noise, meaningless shapes, oversaturated, jpeg artifacts"
+  words:
+  - zh: "抽象几何"
+    en: "abstract geometric forms, bold color contrast, clean composition, balanced negative space, smooth gradients"
+    note: "几何+负空间"
+  - zh: "质感插画"
+    en: "textured illustration, painterly strokes, rich layered color, visible brush texture, artistic depth"
+    note: "笔触与色彩层次"
+  - zh: "艺术光影"
+    en: "dramatic studio lighting, strong shadows, intentional color grading, high detail, 8k"
+    note: "光影制造氛围"

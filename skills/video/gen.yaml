@@ -1,0 +1,18 @@
+# ═══ 视频 · 按生成方式分类 ═══
+groups:
+  - name: 实拍视频
+    en: "real footage"
+    neg: ""
+    words:
+      - { zh: 真实光影, en: "authentic captured lighting" }
+  - name: CG动画
+    en: "CG animation"
+    neg: ""
+    words:
+      - { zh: 精美渲染, en: "high-quality 3D render, volumetric" }
+  - name: AI生成
+    en: "AI generated video"
+    neg: "flicker, warping, artifacts"
+    words:
+      - { zh: 稳定连贯, en: "stable temporally coherent motion" }
+      - { zh: 一致性保持, en: "consistent character identity across frames" }

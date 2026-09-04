@@ -1,0 +1,21 @@
+# ═══ 图片 · 按色彩与视觉表现分类 ═══
+groups:
+  - name: 黑白
+    en: "black and white, monochrome"
+    neg: "low contrast, washed out"
+    words:
+      - { zh: 高对比黑白摄影, en: "high contrast black and white photography" }
+      - { zh: 影调层次, en: "rich tonal range, silver gelatin look" }
+  - name: 彩色
+    en: "full color"
+    neg: "desaturated, muddy"
+    words:
+      - { zh: 饱满色彩, en: "vibrant accurate color, correct white balance" }
+      - { zh: 自然色调, en: "natural color grading, film-like" }
+  - name: 特殊效果
+    en: "stylized special effect"
+    neg: "flat, overlit"
+    words:
+      - { zh: 复古胶片, en: "vintage film, faded tones, grain" }
+      - { zh: 赛博朋克霓虹, en: "cyberpunk neon glow, high contrast teal-magenta" }
+      - { zh: HDR高动态, en: "HDR, rich highlights, deep shadows" }

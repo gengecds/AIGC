@@ -1,14 +1,17 @@
-"""ComfyUI Provider - 通过 ComfyUI API 实现 SD 出图和视频生成"""
+"""ComfyUI Provider - 通过本地 ComfyUI API 实现 SD/FLUX 图片生成
+
+注意：视频生成不走本文件 —— 统一由 providers/ltx_mlx_provider.py 的
+LTX-2.3 MLX 本地原生引擎负责（曾有两个 ComfyUI 视频 Provider 已删除：
+ComfyLTXVideoProvider / ComfyMiniMaxH3VideoProvider）。
+"""
 
 import logging
-import json
-import copy
 import os
 import requests as _requests
 from typing import Optional
 from pathlib import Path
 
-from providers.base import ImageProvider, VideoProvider
+from providers.base import ImageProvider
 from providers.comfyui.client import ComfyUIClient
 
 
@@ -30,7 +33,38 @@ class ComfySDImageProvider(ImageProvider):
             server_addr=cfg.server_addr,
             server_port=cfg.server_port,
         )
-        self._ckpt = "Realistic-Vision-V5.1.safetensors"
+        # 出图模型按「当前激活风格」选择，未配置时回退到 config.yaml 的 comfyui.ckpt_name
+        from config.style_resolver import image_ckpt_for_style, image_model_type_for_style
+        self._ckpt = image_ckpt_for_style(
+            default=getattr(settings.comfyui, "ckpt_name", "v1-5-pruned-emaonly.safetensors")
+        )
+        # 引擎类型：sd15 | flux（默认 sd15，保持向后兼容）
+        self._model_type = image_model_type_for_style(
+            default=getattr(settings.comfyui, "model_type", "sd15")
+        ) or "sd15"
+
+    # ── FLUX 工作流构建（按 model_type 复用）─────────────
+    def _build_txt2img(self, prompt, negative, width, height, seed, steps, cfg):
+        """按引擎类型分发到 SD1.5 或 FLUX 工作流"""
+        if self._model_type == "flux":
+            return ComfyUIClient.build_flux_txt2img_workflow(
+                prompt=prompt,
+                width=width,
+                height=height,
+                seed=seed,
+                steps=steps,
+                cfg=cfg,
+            )
+        return ComfyUIClient.build_txt2img_workflow(
+            ckpt_name=self._ckpt,
+            prompt=prompt,
+            negative_prompt=negative,
+            width=width,
+            height=height,
+            seed=seed,
+            steps=steps,
+            cfg=cfg,
+        )
 
     async def generate(
         self,
@@ -58,10 +92,9 @@ class ComfySDImageProvider(ImageProvider):
                 controlnet_strength=kwargs.get("controlnet_strength", 0.75),
             )
         else:
-            wf = ComfyUIClient.build_txt2img_workflow(
-                ckpt_name=self._ckpt,
+            wf = self._build_txt2img(
                 prompt=prompt,
-                negative_prompt=kwargs.get("negative_prompt", ""),
+                negative=kwargs.get("negative_prompt", ""),
                 width=kwargs.get("width", 512),
                 height=kwargs.get("height", 512),
                 seed=seed or 42,
@@ -123,22 +156,21 @@ class ComfySDImageProvider(ImageProvider):
                     negative_prompt=shot.get("negative_prompt", ""),
                     controlnet_name=ctrl_type,
                     controlnet_image=remote_name,
-                    width=int(shot.get("width", 512)),
-                    height=int(shot.get("height", 512)),
+                    width=int(shot.get("width", 768)),
+                    height=int(shot.get("height", 768)),
                     seed=seed,
-                    steps=int(shot.get("steps", 12)),
+                    steps=int(shot.get("steps", 16)),
                     cfg=float(shot.get("cfg", 7.5)),
-                    controlnet_strength=float(shot.get("controlnet_strength", 0.65)),
+                    controlnet_strength=float(shot.get("controlnet_strength", 0.8)),
                 )
             else:
-                wf = ComfyUIClient.build_txt2img_workflow(
-                    ckpt_name=self._ckpt,
+                wf = self._build_txt2img(
                     prompt=prompt,
-                    negative_prompt=shot.get("negative_prompt", ""),
-                    width=int(shot.get("width", 512)),
-                    height=int(shot.get("height", 512)),
+                    negative=shot.get("negative_prompt", ""),
+                    width=int(shot.get("width", 768)),
+                    height=int(shot.get("height", 768)),
                     seed=seed,
-                    steps=int(shot.get("steps", 12)),
+                    steps=int(shot.get("steps", 16)),
                     cfg=float(shot.get("cfg", 7.5)),
                 )
             resp = await self.client.queue_prompt(wf)
@@ -151,14 +183,19 @@ class ComfySDImageProvider(ImageProvider):
             return []
 
         # 2. 后台轮询完成情况
-        timeout = max(30, len(submitted) * 25)
+        # 本机（Apple M4）FLUX 单张生成实测约 15-25 分钟，远超普通 SD 的 15-60 秒。
+        # 若按旧公式 max(180, n*60)，一集 8 个镜头只有 480s，远不够单张生成即会超时丢图。
+        # 故按「单张 ≥20 分钟」给足预算：timeout = max(1200, n * 1200)。
+        per_img_sec = int(os.environ.get("AIGC_IMG_TIMEOUT_PER_SEC", "1200"))
+        timeout = max(1200, len(submitted) * per_img_sec)
         pending_ids = {s["prompt_id"]: s for s in submitted}
         history_url = f"{self.client.base_url}/history"
         start = time.time()
         while pending_ids and (time.time() - start) < timeout:
-            time.sleep(3)
+            # 用 asyncio.sleep 而非 time.sleep：避免阻塞后端事件循环导致 HTTP 无响应
+            await asyncio.sleep(3)
             try:
-                hist = _noget(history_url, timeout=5).json()
+                hist = (await asyncio.to_thread(_noget, history_url, timeout=5)).json()
             except Exception:
                 continue
             for pid in list(pending_ids.keys()):
@@ -171,7 +208,7 @@ class ComfySDImageProvider(ImageProvider):
         for s in submitted:
             pid = s["prompt_id"]
             try:
-                hist = _noget(history_url, timeout=5).json()
+                hist = (await asyncio.to_thread(_noget, history_url, timeout=5)).json()
                 if pid in hist:
                     outputs = hist[pid]["outputs"]
                     for node_out in outputs.values():
@@ -187,153 +224,3 @@ class ComfySDImageProvider(ImageProvider):
                 logger.warning(f"获取结果失败: {e}")
 
         return flat
-
-
-class ComfyHunyuanVideoProvider(VideoProvider):
-    """ComfyUI + HunyuanVideo 视频生成"""
-
-    WF_PATH = Path(__file__).parent.parent / "workflows" / "img2video_hunyuan_v2.json"
-
-    def __init__(self, client: Optional[ComfyUIClient] = None):
-        from config.settings import settings
-        cfg = settings.comfyui
-        self.client = client or ComfyUIClient(
-            server_addr=cfg.server_addr,
-            server_port=cfg.server_port,
-        )
-        self._workflow_template = json.loads(self.WF_PATH.read_text())
-
-    async def _cp_to_input(self, filename: str):
-        """通过 SSH 把 output/ 目录的文件复制到 input/"""
-        import subprocess
-        try:
-            subprocess.run([
-                "sshpass", "-p", "900917_19871002-Gz",
-                "ssh", "-p", "30476",
-                "-o", "StrictHostKeyChecking=no",
-                f"root@connect.bjb2.seetacloud.com",
-                f"cp /root/ComfyUI/output/{filename} /root/ComfyUI/input/{filename}"
-            ], capture_output=True, timeout=10)
-        except Exception as e:
-            logger.warning(f"SSH cp 失败: {e}")
-
-    async def generate(self, input_image: str, prompt: str = "", **kwargs) -> list[dict]:
-        # 确保图片在 input/ 目录
-        await self._cp_to_input(input_image)
-
-        wf = {k:v for k,v in json.loads(json.dumps(self._workflow_template)).items()
-              if not k.startswith("_")}
-        for nid, node in wf.items():
-            if isinstance(node, dict) and node.get("class_type") == "LoadImage":
-                node["inputs"]["image"] = input_image
-            if isinstance(node, dict) and node.get("class_type") == "HyVideoTextEncode":
-                node["inputs"]["prompt"] = prompt or "cinematic motion, high quality"
-        resp = await self.client.queue_prompt(wf)
-        prompt_id = resp["prompt_id"]
-        result = await self.client.wait_for_completion(prompt_id)
-        if not result["success"]:
-            raise RuntimeError(f"HunyuanVideo 失败: {result.get('error', '?')}")
-        # 返回输出文件信息
-        videos = []
-        for node_out in result.get("outputs", {}).values():
-            for img in node_out.get("images", []):
-                videos.append({
-                    "filename": img["filename"],
-                    "subfolder": img.get("subfolder", ""),
-                    "type": img.get("type", "output"),
-                    "prompt_id": prompt_id,
-                })
-        return videos
-
-    async def batch_generate(self, images: list[dict]) -> list[list[dict]]:
-        """批量提交视频 → 后台轮询收集（不阻塞）"""
-        import asyncio, time
-        import requests
-
-        # 1. 全部推入ComfyUI队列
-        submitted = []
-        for img_info in images:
-            input_image = img_info.get("image_path", img_info.get("image", ""))
-            prompt = img_info.get("prompt", img_info.get("video_motion", ""))
-            await self._cp_to_input(input_image)
-            wf = self._build_video_workflow(input_image, prompt)
-            resp = await self.client.queue_prompt(wf)
-            submitted.append({
-                "prompt_id": resp["prompt_id"],
-                "shot_id": img_info.get("shot_id", ""),
-                "image_path": input_image,
-            })
-
-        if not submitted:
-            return []
-
-        # 2. 后台轮询完成情况
-        timeout = max(120, len(submitted) * 210)  # 每个视频~3.5分钟
-        pending_ids = {s["prompt_id"]: s for s in submitted}
-        history_url = f"{self.client.base_url}/history"
-        queue_url = f"{self.client.base_url}/queue"
-        start = time.time()
-        while pending_ids and (time.time() - start) < timeout:
-            time.sleep(10)
-            try:
-                hist = _noget(history_url, timeout=5).json()
-            except Exception:
-                continue
-            for pid in list(pending_ids.keys()):
-                if pid in hist and hist[pid].get("status", {}).get("completed", False):
-                    s = pending_ids.pop(pid)
-                    logger.info(f"[Video] 完成: shot={s['shot_id']}")
-                    try:
-                        q = _noget(queue_url, timeout=3).json()
-                        r = len(q.get("queue_running", []))
-                        p = len(q.get("queue_pending", []))
-                        logger.info(f"[Video] 队列状态: {r}运行/{p}待处理")
-                    except Exception:
-                        pass
-
-        total = len(submitted)
-        done = total - len(pending_ids)
-        logger.info(f"[Video] 视频批量完成: {done}/{total}")
-
-        # 3. 收集结果
-        all_results = []
-        for s in submitted:
-            pid = s["prompt_id"]
-            try:
-                hist = _noget(history_url, timeout=5).json()
-                if pid in hist:
-                    outputs = hist[pid]["outputs"]
-                    frames = []
-                    for node_out in outputs.values():
-                        for img in node_out.get("images", []):
-                            frames.append({
-                                "filename": img["filename"],
-                                "subfolder": img.get("subfolder", ""),
-                                "type": img.get("type", "output"),
-                                "prompt_id": pid,
-                                "shot_id": s["shot_id"],
-                            })
-                    # 把25帧打包为一个视频条目
-                    # 排序确保帧顺序
-                    frames.sort(key=lambda x: x["filename"])
-                    all_results.append({
-                        "shot_id": s["shot_id"],
-                        "frames": frames,
-                        "prompt_id": pid,
-                        "total_frames": len(frames),
-                    })
-            except Exception as e:
-                logger.warning(f"收集视频结果失败: {e}")
-
-        return all_results
-
-    def _build_video_workflow(self, input_image: str, prompt: str) -> dict:
-        """构建 HyVideo 工作流（不含 LLM 调用，去除元数据字段）"""
-        wf = {k: copy.deepcopy(v) for k, v in self._workflow_template.items()
-              if not k.startswith("_")}
-        for nid, node in wf.items():
-            if isinstance(node, dict) and node.get("class_type") == "LoadImage":
-                node["inputs"]["image"] = input_image
-            if isinstance(node, dict) and node.get("class_type") == "HyVideoTextEncode":
-                node["inputs"]["prompt"] = prompt or "cinematic motion, high quality"
-        return wf

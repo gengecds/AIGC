@@ -7,6 +7,18 @@ from sqlalchemy.orm import declarative_base, sessionmaker
 Base = declarative_base()
 
 
+class User(Base):
+    """用户（前端登录系统）"""
+    __tablename__ = "users"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    username = Column(String(64), unique=True, nullable=False, comment="用户名")
+    password_hash = Column(String(128), nullable=False, comment="密码哈希（sha256+salt）")
+    salt = Column(String(32), default="", comment="密码盐")
+    token = Column(String(128), default="", comment="登录 token（登出后清空）")
+    created_at = Column(DateTime, default=datetime.utcnow)
+
+
 class Story(Base):
     """故事主表"""
     __tablename__ = "stories"

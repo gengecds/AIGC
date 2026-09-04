@@ -1,50 +1,371 @@
-# AI 漫剧创作平台 — 配置中心
-# 覆盖顺序: 环境变量 > config.yaml > 默认值
-
 engine:
-  # 图片生成引擎: "comfyui" | "mock" | "tongyi"
-  image_provider: "mock"
-  # 视频生成引擎: "comfyui" | "mock"
-  video_provider: "mock"
-  # LLM引擎: "deepseek" | "ollama" | "mock"
-  llm_provider: "mock"
-
+  image_provider: comfyui
+  video_provider: comfyui
+  # 视频引擎：固定 LTX-2.3 MLX 本地原生引擎（快、9:16、不走 ComfyUI），漫剧/短视频首选。
+  # 曾支持 'ltx'/'minimax_h3' 多引擎，对应 ComfyUI 视频模型已删除，勿改回。
+  video_engine: "ltx_mlx"
+  # LLM 后端："deepseek"（云端推理强，付费+需网络，剧本/分镜质量高）
+  #        或 "ollama"（纯本地 qwen3:8b，0 成本，无网可用，质量稍弱）
+  # 若选 deepseek 但未配置 DEEPSEEK_API_KEY，代码会自动 fallback 回 ollama（不会报错）
+  llm_provider: deepseek
+  # deepseek 无 Key 时是否自动回退到 Ollama（默认 True，保证冒烟测试能跑通）
+  llm_deepseek_fallback: true
+  # ===== DeepSeek 模型分层（V4 系列，省钱+提效的关键配置）=====
+  # 剧本生成：长文本、创意优先、速度快便宜 → V4-Flash（约 0.1元/百万token）
+  llm_model_script: deepseek-v4-flash
+  # 分镜生成：结构化 JSON、逻辑推理、人物关系一致性 → V4-Pro（约 2元/百万token）
+  llm_model_storyboard: deepseek-v4-pro
 comfyui:
-  server_addr: "127.0.0.1"
-  server_port: 18188
+  server_addr: 127.0.0.1
+  server_port: 8188
+  ckpt_name: v1-5-pruned-emaonly.safetensors
+  model_type: flux
   use_https: false
-  timeout: 300
-  # GPU SSH 配置（ComfyUI 直接时不需要）
-  gpu_host: "root@connect.bjb2.seetacloud.com"
-  gpu_port: 30476
-  gpu_pass: "900917_19871002-Gz"
-  gpu_output_dir: "/root/ComfyUI/output"
-
-deepseek:
-  api_key: ""  # 优先环境变量 DEEPSEEK_API_KEY
-  model: "deepseek-chat"
-
+  timeout: 1800
+tts:
+  engine: voxcpm
+  voice_prompt: 温柔甜美年轻女声，柔和有亲和力
 ollama:
-  server_url: "http://localhost:11434"
-  model: "qwen3:14b"
-
-tongyi:
-  api_key: ""  # 优先环境变量 TONGYI_API_KEY
-  model: "wanx2.1-t2i-plus"
-
+  server_url: http://localhost:11434
+  model: qwen3:8b
+  num_ctx: 8192
+styles:
+  写实风格:
+    llm_model: qwen3:8b
+    image_ckpt: flux1-schnell-Q5_K_S.gguf
+    image_model_type: flux
+    video_model: ltx-2.3-mlx-q4  # LTX-2.3 本地 MLX 模型（storage/models 目录，非 ComfyUI 文件）
+    video_model_type: ltx_mlx
+    description: 接近真人摄影的电影级画面，光影真实、皮肤质感自然。
+    advice: 要质量 → 首选 FLUX.1-dev（黑森林旗舰，细节/皮肤/光影最顶，但慢）；M4 本地跑不动时用 FLUX.1-schnell 的 GGUF
+      提速。要更"照片级"也可换 Realistic-Vision-V5.1（SD1.5 最快最稳）。视频用 LTX-2.3 MLX，本地 9:16 快出片，音频由 audio_agent 后期合成。
+    recommended_models:
+    - FLUX.1-dev.safetensors
+    - FLUX.1-schnell-Q5_K_S.gguf
+    - Realistic-Vision-V5.1.safetensors
+    - v1-5-pruned-emaonly.safetensors
+    keywords:
+    - 写实
+    - 电影级光影
+    - 真人摄影
+    - 35mm 镜头
+    - 自然肤色
+    - 真实皮肤质感
+    neg_prompt: 卡通, 手绘, 动漫, 3D, 低质量, 模糊, 变形人脸, 多余手指, 水印
+    tts_engine: voxcpm
+    voice_prompt: 活泼元气少女声，轻快明亮
+    subtitle_mode: llm
+    subtitle_lang: zh
+  国风古风:
+    llm_model: qwen3:8b
+    image_ckpt: v1-5-pruned-emaonly.safetensors
+    image_model_type: sd15
+    video_model: ltx-2.3-mlx-q4  # LTX-2.3 本地 MLX 模型（storage/models 目录，非 ComfyUI 文件）
+    video_model_type: ltx_mlx
+    description: 中国传统文化调性——工笔、敦煌壁画、汉服古建、水墨留白。
+    advice: 国风主要靠底模 + 水墨/古风 LoRA 强化；SD1.5 底模 + Chinese Ink / Guofeng LoRA 最出味。追求高级工笔感可换
+      Anything V5 底模补充。
+    recommended_models:
+    - v1-5-pruned-emaonly.safetensors
+    - Anything V5.safetensors
+    - Chinese Ink Painting LoRA
+    - Guofeng LoRA
+    keywords:
+    - 国风古风
+    - 工笔彩绘
+    - 敦煌壁画
+    - 汉服古建
+    - 水墨留白
+    - 书法笔触
+    neg_prompt: 西方油画, 现代简约, 赛博朋克, 低质量, 模糊, 变形, 水印
+  复古港风:
+    llm_model: qwen3:8b
+    image_ckpt: Realistic-Vision-V5.1.safetensors
+    image_model_type: sd15
+    video_model: ltx-2.3-mlx-q4  # LTX-2.3 本地 MLX 模型（storage/models 目录，非 ComfyUI 文件）
+    video_model_type: ltx_mlx
+    description: 80-90 年代港片质感——胶片颗粒、高饱和霓虹、卷发红唇、复古电影。
+    advice: 港风靠写实底模 + 胶片/复古 LoRA + 调色；RealisticVision 底模最稳，配 Retro HK LoRA 更对味。
+    recommended_models:
+    - Realistic-Vision-V5.1.safetensors
+    - v1-5-pruned-emaonly.safetensors
+    - Retro Hong Kong LoRA
+    keywords:
+    - 复古港风
+    - 胶片颗粒
+    - 高饱和霓虹
+    - 卷发红唇
+    - 复古电影
+    - 暖黄光
+    neg_prompt: 现代干净配色, 扁平光, 低对比, 低质量, 模糊, 变形, 水印
+  蒸汽波:
+    llm_model: qwen3:8b
+    image_ckpt: v1-5-pruned-emaonly.safetensors
+    image_model_type: sd15
+    video_model: ltx-2.3-mlx-q4  # LTX-2.3 本地 MLX 模型（storage/models 目录，非 ComfyUI 文件）
+    video_model_type: ltx_mlx
+    description: 粉紫蓝霓虹渐变、复古像素网格、VHS 故障、迷幻超现实。
+    advice: 蒸汽波靠配色关键词 + Vaporwave LoRA；SD1.5 底模即可，配 Vaporwave LoRA 强化粉紫蓝与复古合成器质感。
+    recommended_models:
+    - v1-5-pruned-emaonly.safetensors
+    - Vaporwave LoRA
+    keywords:
+    - 蒸汽波
+    - 粉紫蓝配色
+    - 霓虹渐变
+    - 复古合成器
+    - VHS故障
+    - 迷幻超现实
+    neg_prompt: 写实纹理, 灰暗低饱和, 低质量, 模糊, 变形, 水印
+  蒸汽朋克:
+    llm_model: qwen3:8b
+    image_ckpt: v1-5-pruned-emaonly.safetensors
+    image_model_type: sd15
+    video_model: ltx-2.3-mlx-q4  # LTX-2.3 本地 MLX 模型（storage/models 目录，非 ComfyUI 文件）
+    video_model_type: ltx_mlx
+    description: 黄铜机械、齿轮、飞艇、维多利亚时代冒险、温暖琥珀工坊光。
+    advice: 蒸汽朋克靠底模 + Steampunk LoRA；SD1.5 底模足够，配 Steampunk LoRA 强化黄铜/齿轮机械细节。
+    recommended_models:
+    - v1-5-pruned-emaonly.safetensors
+    - Steampunk LoRA
+    keywords:
+    - 蒸汽朋克
+    - 黄铜机械
+    - 齿轮飞艇
+    - 维多利亚
+    - 复古工业
+    - 暖琥珀工坊光
+    neg_prompt: 现代光滑塑料, 干净科幻, 低质量, 模糊, 变形, 水印
+  赛博朋克:
+    llm_model: qwen3:8b
+    image_ckpt: v1-5-pruned-emaonly.safetensors
+    image_model_type: sd15
+    video_model: ltx-2.3-mlx-q4  # LTX-2.3 本地 MLX 模型（storage/models 目录，非 ComfyUI 文件）
+    video_model_type: ltx_mlx
+    description: 霓虹、雨夜、机械义体、高对比冷暖光的高科技都市。
+    advice: 赛博朋克靠霓虹关键词 + 光影即可出彩，SD1.5 底模够用；想要更强烈的霓虹质感可用 Cyberpunk LoRA 强化。
+    recommended_models:
+    - v1-5-pruned-emaonly.safetensors
+    - Cyberpunk LoRA
+    keywords:
+    - 赛博朋克
+    - 霓虹灯
+    - 雨夜都市
+    - 机械义体
+    - 冷暖对比光
+    - 高科技
+    neg_prompt: 田园, 古风, 低质量, 模糊, 变形, 水印
+  治愈系ins:
+    llm_model: qwen3:8b
+    image_ckpt: v1-5-pruned-emaonly.safetensors
+    image_model_type: sd15
+    video_model: ltx-2.3-mlx-q4  # LTX-2.3 本地 MLX 模型（storage/models 目录，非 ComfyUI 文件）
+    video_model_type: ltx_mlx
+    description: 暖调清新、慢生活氛围、柔和光、奶油色治愈系日常。
+    advice: 治愈系靠暖光关键词 + 清新 LoRA；SD1.5 底模 + Pastel/Cozy LoRA，要更"ins 感"可换写实底模。
+    recommended_models:
+    - v1-5-pruned-emaonly.safetensors
+    - Cozy Daily LoRA
+    keywords:
+    - 治愈系
+    - 暖调清新
+    - 慢生活氛围
+    - 奶油色调
+    - 柔焦
+    - 日系清爽
+    neg_prompt: 暗黑压抑, 高对比戏剧, 冷硬光, 低质量, 模糊, 变形, 水印
+  极简主义:
+    llm_model: qwen3:8b
+    image_ckpt: v1-5-pruned-emaonly.safetensors
+    image_model_type: sd15
+    video_model: ltx-2.3-mlx-q4  # LTX-2.3 本地 MLX 模型（storage/models 目录，非 ComfyUI 文件）
+    video_model_type: ltx_mlx
+    description: 大量留白、干净线条、单一主体、高级灰莫兰迪色调。
+    advice: 极简靠构图关键词 + 少量 LoRA；SD1.5 底模 + Minimalist/Morandi LoRA，主体越少越出彩。
+    recommended_models:
+    - v1-5-pruned-emaonly.safetensors
+    - Minimalist Morandi LoRA
+    keywords:
+    - 极简主义
+    - 留白构图
+    - 高级灰莫兰迪
+    - 干净线条
+    - 单一主体
+    - 克制
+    neg_prompt: 杂乱, 过多细节, 高饱和噪点, 低质量, 模糊, 变形, 水印
+  日系动漫:
+    llm_model: qwen3:8b
+    image_ckpt: Anything V5.safetensors
+    image_model_type: sd15
+    video_model: ltx-2.3-mlx-q4  # LTX-2.3 本地 MLX 模型（storage/models 目录，非 ComfyUI 文件）
+    video_model_type: ltx_mlx
+    description: 日系平涂/赛璐璐动画风，线条干净、色彩鲜艳，含吉卜力/新海诚调性。
+    advice: 要纯正日漫感 → 装二次元专属底模（Anything V5 / Counterfeit V3.0）并改 image_ckpt；追求新海诚/吉卜力光感可叠加对应
+      LoRA。
+    recommended_models:
+    - Anything V5.safetensors
+    - Counterfeit-V3.0.safetensors
+    - v1-5-pruned-emaonly.safetensors
+    keywords:
+    - 日系动漫
+    - 赛璐璐平涂
+    - 精美线稿
+    - 鲜艳色彩
+    - 吉卜力
+    - 新海诚
+    neg_prompt: 写实, 真人, 3D照片, 低质量, 模糊, 变形, 水印
+  3D卡通:
+    llm_model: qwen3:8b
+    image_ckpt: v1-5-pruned-emaonly.safetensors
+    image_model_type: sd15
+    video_model: ltx-2.3-mlx-q4  # LTX-2.3 本地 MLX 模型（storage/models 目录，非 ComfyUI 文件）
+    video_model_type: ltx_mlx
+    description: 皮克斯/黏土渲染的 3D 卡通——光滑材质、圆润造型、电影级软渲。
+    advice: 3D 卡通感靠 3D Render/Pixar 风格 LoRA；SD1.5 底模 + 3D 渲染 LoRA，要更高质感可换 FLUX（flux
+      底模需另外准备 gguf 组件）。
+    recommended_models:
+    - v1-5-pruned-emaonly.safetensors
+    - 3D Render LoRA
+    - FLUX.1-dev.safetensors
+    keywords:
+    - 3D卡通
+    - 皮克斯
+    - 光滑材质
+    - 黏土渲染
+    - 电影级软渲
+    - 圆润造型
+    neg_prompt: 扁平2D, 脏污材质, 硬光, 低质量, 模糊, 变形, 水印
+  Q版卡通:
+    llm_model: qwen3:8b
+    image_ckpt: Anything V5.safetensors
+    image_model_type: sd15
+    video_model: ltx-2.3-mlx-q4  # LTX-2.3 本地 MLX 模型（storage/models 目录，非 ComfyUI 文件）
+    video_model_type: ltx_mlx
+    description: 二头身 Q 版、夸张大眼、高饱和萌系、贴纸感。
+    advice: Q 版用二次元底模 + Chibi LoRA 最稳；Anything V5 底模 + Chibi LoRA 强化大萌眼与高饱和。
+    recommended_models:
+    - Anything V5.safetensors
+    - v1-5-pruned-emaonly.safetensors
+    - Chibi LoRA
+    keywords:
+    - Q版卡通
+    - 二头身
+    - 高饱和萌系
+    - 大眼
+    - 贴纸感
+    - 可爱
+    neg_prompt: 写实比例, 精细解剖, 灰暗色调, 低质量, 模糊, 变形, 水印
+  像素艺术:
+    llm_model: qwen3:8b
+    image_ckpt: v1-5-pruned-emaonly.safetensors
+    image_model_type: sd15
+    video_model: ltx-2.3-mlx-q4  # LTX-2.3 本地 MLX 模型（storage/models 目录，非 ComfyUI 文件）
+    video_model_type: ltx_mlx
+    description: 16-bit/复古像素，点阵、限定色板、街机怀旧。
+    advice: 像素风靠 Pixel Art LoRA + 关键词；SD1.5 底模 + Pixel Art LoRA，字号小多留白更出像素味。
+    recommended_models:
+    - v1-5-pruned-emaonly.safetensors
+    - Pixel Art LoRA
+    keywords:
+    - 像素艺术
+    - 16-bit怀旧
+    - 复古像素
+    - 点阵
+    - 限定色板
+    - 街机
+    neg_prompt: 平滑渐变, 照片级, 抗锯齿模糊, 低质量, 模糊, 水印
+  古典油画:
+    llm_model: qwen3:8b
+    image_ckpt: v1-5-pruned-emaonly.safetensors
+    image_model_type: sd15
+    video_model: ltx-2.3-mlx-q4  # LTX-2.3 本地 MLX 模型（storage/models 目录，非 ComfyUI 文件）
+    video_model_type: ltx_mlx
+    description: 厚重笔触、油彩、金色明暗对照、博物馆杰作感。
+    advice: 油画靠 Oil Painting LoRA + 明暗关键词；SD1.5 底模 + Classical Oil LoRA，色调越暖越像真油画。
+    recommended_models:
+    - v1-5-pruned-emaonly.safetensors
+    - Classical Oil Painting LoRA
+    keywords:
+    - 古典油画
+    - 厚重笔触
+    - 明暗对照
+    - 油彩
+    - 博物馆质感
+    - 暖金调
+    neg_prompt: 数字扁平, 塑料, 干净卡通, 低质量, 模糊, 变形, 水印
+  水彩:
+    llm_model: qwen3:8b
+    image_ckpt: v1-5-pruned-emaonly.safetensors
+    image_model_type: sd15
+    video_model: ltx-2.3-mlx-q4  # LTX-2.3 本地 MLX 模型（storage/models 目录，非 ComfyUI 文件）
+    video_model_type: ltx_mlx
+    description: 通透晕染、水彩纸纹、清新空气感。
+    advice: 水彩靠 Watercolor LoRA + 晕染关键词；SD1.5 底模 + Watercolor LoRA，笔触一多就有水彩味。
+    recommended_models:
+    - v1-5-pruned-emaonly.safetensors
+    - Watercolor LoRA
+    keywords:
+    - 水彩
+    - 通透晕染
+    - 纸纹
+    - 清新
+    - 水色
+    - 空气感
+    neg_prompt: 硬边缘, 高饱和色块, 油腻, 低质量, 模糊, 变形, 水印
+  素描:
+    llm_model: qwen3:8b
+    image_ckpt: v1-5-pruned-emaonly.safetensors
+    image_model_type: sd15
+    video_model: ltx-2.3-mlx-q4  # LTX-2.3 本地 MLX 模型（storage/models 目录，非 ComfyUI 文件）
+    video_model_type: ltx_mlx
+    description: 铅笔速写、排线、灰阶、手绘素描稿。
+    advice: 素描靠 Sketch LoRA + 排线关键词；SD1.5 底模 + Sketch/Pencil LoRA，去色即可得灰阶素描感。
+    recommended_models:
+    - v1-5-pruned-emaonly.safetensors
+    - Sketch Pencil LoRA
+    keywords:
+    - 素描
+    - 铅笔速写
+    - 排线
+    - 灰阶
+    - 手绘稿
+    - 留白
+    neg_prompt: 全彩, 光滑阴影, 渲染填充, 低质量, 模糊, 变形, 水印
+  电影级质感:
+    llm_model: qwen3:8b
+    image_ckpt: FLUX.1-dev.safetensors
+    image_model_type: flux
+    video_model: ltx-2.3-mlx-q4  # LTX-2.3 本地 MLX 模型（storage/models 目录，非 ComfyUI 文件）
+    video_model_type: ltx_mlx
+    description: 2.35 宽画幅、浅景深、青橙电影调色、大片质感。
+    advice: 要电影级 → 首选 FLUX.1-dev（大厂质感）；本地跑不动换 FLUX.1-schnell GGUF。强调宽画幅与青橙调色即可出大片感。
+    recommended_models:
+    - FLUX.1-dev.safetensors
+    - FLUX.1-schnell-Q5_K_S.gguf
+    - v1-5-pruned-emaonly.safetensors
+    keywords:
+    - 电影级质感
+    - 2.35宽画幅
+    - 浅景深
+    - 电影调色
+    - 青橙
+    - 大片质感
+    neg_prompt: 扁平业余光, 褪色, 廉价, 低质量, 模糊, 变形, 水印
 storage:
-  checkpoint_dir: "storage/checkpoints/"
-  output_dir: "storage/output/"
-  images_dir: "storage/images/"
-  frames_dir: "storage/frames_tmp/"
-
+  checkpoint_dir: storage/checkpoints/
+  output_dir: storage/output/
+  images_dir: storage/images/
+  frames_dir: storage/frames_tmp/
 pipeline:
   max_retries: 3
-  retry_delay: 2.0  # 秒
+  retry_delay: 2.0
   review_enabled: true
-  default_model: "deepseek-chat"
-
+  default_model: deepseek-chat
 frontend:
-  host: "127.0.0.1"
-  port: 8000
+  host: 127.0.0.1
+  port: 8888
   debug: true
+intel:
+  enabled: false
+  source_dir: storage/intel/source/
+  cases_dir: storage/intel/cases/

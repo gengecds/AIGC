@@ -33,7 +33,7 @@ async def main():
 
     # 用 Mock provider 构造所有 Agent
     # 各 Agent 的 init 参数不同，按实际定义传参
-    script_agent = ScriptAgent()  # 默认 deepseek，但会尝试 import，mock 模式需要跳过
+    script_agent = ScriptAgent()  # 默认 ollama（本地），mock 模式不会真正调用
     storyboard_agent = StoryboardAgent()
     character_agent = CharacterDesignAgent()  # 默认用 MockImageProvider
     image_agent = ImageGenAgent()  # 默认不用 comfyui，用 mock
@@ -86,7 +86,7 @@ async def main():
         if all_pass:
             print("✅ 最终结论: Pipeline 数据流完整性验证通过")
             print("   所有 7 个 Agent 数据传递正确")
-            print("   后续只需将 MockProvider → 真 ComfyUIProvider + DeepSeekProvider")
+            print("   后续只需将 MockProvider → 真 ComfyUIProvider + 本地 OllamaProvider")
         else:
             print("❌ 部分 Agent 失败")
     else:

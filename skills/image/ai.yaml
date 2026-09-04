@@ -1,0 +1,17 @@
+# ═══ 图片 · AI/CV 领域分类 ═══
+# 从模型训练与数据处理角度。这些主要用于"数据/任务"技能，强调标注与用途。
+groups:
+  - name: 按任务类型
+    en: "computer vision task image"
+    neg: "unclear subject, blurry boundaries"
+    words:
+      - { zh: 图像分类图, en: "clearly separated single subject, well-lit" }
+      - { zh: 目标检测标注, en: "object detection, clear bounding box target" }
+      - { zh: 语义分割, en: "semantic segmentation, distinct regions" }
+  - name: 按数据来源
+    en: "image data source type"
+    neg: "watermark, low quality, duplicates"
+    words:
+      - { zh: 真实场景实拍, en: "real-world scene photograph" }
+      - { zh: 计算机合成CGI, en: "computer generated image, physically based" }
+      - { zh: 数据增强, en: "data-augmented image, controlled variation" }

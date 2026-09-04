@@ -287,11 +287,19 @@ body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;b
 </div>
 
 <script>
-// ========== 数据 ==========
+// ═══════════════════════════════════════
+// AI 漫剧制作平台 v2 — 真实后端对接
+// 保留 prototype 全部 UI 不动，替换数据流
+// 数据源：后端 REST + SSE，离线时 mock fallback
+// ═══════════════════════════════════════
+
+const API = 'http://127.0.0.1:8888';
+const AGENT_LABELS = {script:'剧本',storyboard:'分镜',character:'定妆照',image:'出图',video:'视频',subtitle:'字幕',compose:'合成'};
+
+// ===== 离线 Mock 数据（后端不通时用） =====
 const CHAR_IMAGES = ['prototype-assets/actress1.jpg','prototype-assets/actress2.jpg','prototype-assets/actress3.jpg','prototype-assets/actress4.jpg'];
 const SCENE_IMAGES = ['prototype-assets/bg_japan.jpg','prototype-assets/bg_night.jpg','prototype-assets/hero_bg.jpg'];
-
-const storyboardData = [
+const mockSB = [
   {id:1,type:'中景',dur:'5s',desc:'林风坐在电脑前专注地敲击键盘',prompt:'青年男子程序员深夜加班'},
   {id:2,type:'特写',dur:'4s',desc:'林风眼睛盯着屏幕，表情专注',prompt:'眼睛特写，专注神情'},
   {id:3,type:'近景',dur:'4s',desc:'白露从远处跑来，猫耳朵竖起',prompt:'白色猫娘奔跑'},
@@ -305,123 +313,99 @@ const storyboardData = [
   {id:11,type:'近景',dur:'4s',desc:'小花从树上跳下，活泼地挥手',prompt:'花猫猫娘活泼跳跃'},
   {id:12,type:'远',dur:'6s',desc:'远处山巅的城堡在月光下轮廓分明',prompt:'月光城堡远眺'},
 ];
-
-const dialogs = [
-  {speaker:'林风',text:'这是哪？我怎么在这里？'},
-  {speaker:'雪儿',text:'你醒了！你是第一个来到我们村的人类！'},
-  {speaker:'林风',text:'你们是……猫？'},
-  {speaker:'雪儿',text:'嘻嘻，我们是猫娘啊，没见过吗？'},
-  {speaker:'露娜',text:'哼，又是一个迷路的家伙。'},
-  {speaker:'老猫长老',text:'年轻人，别怕。这里是猫娘村，你是我们的客人。'},
-  {speaker:'林风',text:'我没有恶意，只是不知道怎么来的……'},
-  {speaker:'雪儿',text:'慢慢来，我带你转转吧！'},
+const mockDialogs = [
+  {speaker:'林风',text:'这是哪？我怎么在这里？'},{speaker:'雪儿',text:'你醒了！你是第一个来到我们村的人类！'},
+  {speaker:'林风',text:'你们是……猫？'},{speaker:'雪儿',text:'嘻嘻，我们是猫娘啊，没见过吗？'},
+  {speaker:'露娜',text:'哼，又是一个迷路的家伙。'},{speaker:'老猫长老',text:'年轻人，别怕。这里是猫娘村，你是我们的客人。'},
+  {speaker:'林风',text:'我没有恶意，只是不知道怎么来的……'},{speaker:'雪儿',text:'慢慢来，我带你转转吧！'},
 ];
 
-const historyData = [
-  {id:'20260620_1615',name:'猫之异界：程序员的逆袭',status:'PAUSED',progress:'剧本/分镜 ✅'},
-  {id:'20260620_1542',name:'程序员猫娘奇遇记',status:'COMPLETE',progress:'7/7'},
-  {id:'20260619_2201',name:'测试故事',status:'FAILED',progress:'Agent 4 出图失败'},
-];
-
-// ========== 状态 ==========
+// ===== 状态 =====
+let backendOnline = false;
 let pipelineRunning = false;
+let pipelineId = null;
+let selectedAgent = 'script';
+let snapshot = {};
+let eventSource = null;
 let imgCount = 5;
 let vidCount = 3;
-let imgTimer = null;
-let vidTimer = null;
-let selectedAgent = 'character';
 
-// ========== 视图渲染 ==========
+// ===== 工具 =====
+function esc(t) { if(!t) return ''; var d=document.createElement('div'); d.textContent=t; return d.innerHTML; }
+
+// ===== 卡片状态 =====
+function setCardState(agent, status, meta) {
+  var card = document.querySelector('.card[data-agent="'+agent+'"]');
+  if (!card) return;
+  ['idle','pending','running','blocked','done','fail'].forEach(function(s){card.classList.remove('state-'+s);});
+  card.classList.add('state-'+status);
+  var stEl = card.querySelector('.status-text');
+  if (stEl) {
+    var labels = {idle:'空闲',pending:'⏳ 排队',running:'⏳ 执行中…',blocked:'⏸️ 待确认',done:'✅ 完成',fail:'❌ 失败'};
+    stEl.textContent = (status==='done' && meta) ? meta : (labels[status]||status);
+  }
+  // badge
+  if (status === 'blocked') {
+    var badge = card.querySelector('.badge');
+    if (!badge) { badge = document.createElement('span'); badge.className='badge badge-blocked'; card.appendChild(badge); }
+    badge.textContent = '⏸️';
+  } else if (card.querySelector('.badge')) { card.querySelector('.badge').remove(); }
+}
+function resetAllCards() {
+  ['script','storyboard','character','image','video','subtitle','compose'].forEach(function(a){
+    setCardState(a,'idle','');
+  });
+}
+
+// ===== 全局进度 =====
+function setProgress(pct, statusHtml) {
+  var fill = document.getElementById('progressFill');
+  var st = document.getElementById('progressStatus');
+  var pctEl = document.getElementById('progressPct');
+  if (fill) fill.style.width = Math.min(100, Math.max(0, pct)) + '%';
+  if (st) st.innerHTML = statusHtml || (pct===100?'✅ 全部完成':'🚀 管线执行中…');
+  if (pctEl) { var n=Math.floor(pct/14.29); pctEl.textContent = pct===100?'✅ 全部完成':pct+'% ('+Math.min(n+1,7)+'/7 Agent)'; }
+}
+
+// ===== 日志 =====
+function addLog(level, agent, msg) {
+  var area = document.getElementById('logArea');
+  if (!area) return;
+  var entry = document.createElement('div');
+  entry.className = 'log-entry ' + (level==='SUCCESS'?'success':level==='WARN'?'warn':level==='ERROR'?'error':'');
+  var t = new Date();
+  entry.innerHTML = '<span class="time">'+t.toTimeString().slice(0,8)+'</span>['+(AGENT_LABELS[agent]||agent)+'] '+esc(msg);
+  area.insertBefore(entry, area.firstChild);
+  if (area.children.length > 50) area.removeChild(area.lastChild);
+}
+
+// ===== Toast =====
+function showToast(msg) {
+  var t = document.getElementById('toast');
+  if (!t) {
+    t = document.createElement('div'); t.id='toast';
+    t.style.cssText='position:fixed;bottom:80px;left:50%;transform:translateX(-50%);background:#16161f;border:1px solid #6c5ce7;color:#e8e8f0;padding:10px 24px;border-radius:8px;font-size:13px;z-index:300;transition:.3s;opacity:0';
+    document.body.appendChild(t);
+  }
+  t.textContent = msg; t.style.opacity='1';
+  setTimeout(function(){t.style.opacity='0';},2000);
+}
+
+// ===== 详情渲染 =====
 function renderDetail(agent) {
   selectedAgent = agent;
-  const area = document.getElementById('detailArea');
-  const card = document.querySelector(`.card[data-agent="${agent}"]`);
-  const state = card ? card.className.match(/state-\w+/)?.[0] : 'state-idle';
-  const isBlocked = state === 'state-blocked';
-  const isRunning = state === 'state-running';
-  const isDone = state === 'state-done';
-
-  switch(agent) {
-    case 'script': renderScript(area, isBlocked, isDone); break;
-    case 'storyboard': renderStoryboard(area, isBlocked); break;
-    case 'character': renderCharacter(area, isBlocked); break;
-    case 'image': renderImage(area, isRunning, isDone); break;
-    case 'video': renderVideo(area, isRunning, isDone); break;
-    case 'subtitle': renderSubtitle(area, isDone); break;
-    case 'compose': renderCompose(area, isDone); break;
-  }
+  var area = document.getElementById('detailArea');
+  var card = document.querySelector('.card[data-agent="'+agent+'"]');
+  // 高亮
+  document.querySelectorAll('.card').forEach(function(c){c.style.borderColor='';c.style.boxShadow='';});
+  if (card) { card.style.borderColor='#6c5ce7'; card.style.boxShadow='0 0 16px rgba(108,92,231,0.2)'; }
+  var m = card ? (card.className.match(/state-\w+/)||['state-idle'])[0] : 'state-idle';
+  renderAgentDetail(agent, area, m);
 }
 
-function renderScript(area) {
-  area.innerHTML = `
-    <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:16px">
-      <div><span style="font-size:16px">📝</span> <strong>剧本：猫之异界：程序员的逆袭</strong></div>
-      <button class="btn btn-outline btn-sm" onclick="showToast('编辑模式已打开')">✏️ 编辑剧本</button>
-    </div>
-    <div style="display:flex;gap:24px;margin-bottom:14px">
-      <div>
-        <div style="font-size:11px;color:#555570;margin-bottom:6px">角色</div>
-        <div style="font-size:12px;color:#e8e8f0;line-height:1.8">
-          • 林风（男）程序员穿越<br>• 雪儿（女）白色猫娘，温柔<br>• 露娜（女）黑猫猫娘，傲娇<br>• 小花（女）花猫猫娘，活泼<br>• 老猫长老（男）睿智长者
-        </div>
-      </div>
-      <div>
-        <div style="font-size:11px;color:#555570;margin-bottom:6px">场景</div>
-        <div style="font-size:12px;color:#e8e8f0;line-height:1.8">
-          • 现代办公楼<br>• 竹林木屋<br>• 猫娘城堡<br>• 村中广场<br>• 山巅瞭望台
-        </div>
-      </div>
-      <div>
-        <div style="font-size:11px;color:#555570;margin-bottom:6px">分集</div>
-        <div style="font-size:12px;color:#e8e8f0;line-height:1.8">
-          ├─ 第1集：穿越异世界（12句/20镜）<br>├─ 第2集：融入猫娘村（15句/22镜）<br>└─ 第3集：危机降临（18句/24镜）
-        </div>
-      </div>
-    </div>
-    <div style="font-size:11px;color:#555570;margin-bottom:8px">第1集对话 <span style="color:#8888a0;font-weight:400">（点击 ✏️ 可编辑）</span></div>
-    <div style="background:#0f0f13;border:1px solid #2a2a3a;border-radius:8px;padding:10px 14px;font-size:12px;line-height:1.8">
-      ${dialogs.map((d,i) => `<div style="display:flex;gap:8px;padding:3px 0;border-bottom:${i<dialogs.length-1?'1px solid #1a1a24':'none'}">
-        <span style="color:#6c5ce7;min-width:40px;font-weight:600">[${d.speaker}]</span>
-        <span style="color:#e8e8f0;flex:1">${d.text}</span>
-        <span style="color:#555570;cursor:pointer" onclick="showToast('修改对话: ${d.text.slice(0,10)}…')">✏️</span>
-      </div>`).join('')}
-    </div>`;
-}
-
-function renderStoryboard(area, isBlocked) {
-  let html = `<div style="font-size:16px;margin-bottom:12px">📋 <strong>分镜审核 — 第1集</strong> <span style="font-size:12px;color:#8888a0;font-weight:400">(12镜头, 总58秒)</span></div>
-    <div style="font-size:11px;color:#555570;margin-bottom:10px">景别分布: 中4 近3 远2 特写2 俯拍1</div>
-    <table class="storyboard-table"><tr><th>序号</th><th>景别/s</th><th class="shot-desc">描述（可编辑）</th><th>sd_prompt</th></tr>`;
-  storyboardData.forEach(s => {
-    html += `<tr><td>#${s.id}</td><td>${s.type}/${s.dur}</td><td class="shot-desc"><input value="${s.desc}"></td><td style="font-size:10px;color:#555570;max-width:120px;overflow:hidden;text-overflow:ellipsis">${s.prompt}</td></tr>`;
-  });
-  html += `</table>`;
-  if (isBlocked) {
-    html += `<div class="review-banner" style="margin-top:14px"><span>⏸️</span> 分镜已生成，请确认内容无误后继续生产</div>
-      <div class="review-buttons"><button class="btn btn-primary" onclick="approve()">✅ 确认无误，继续生产</button>
-      <button class="btn btn-danger" onclick="reject()">❌ 修改完成，重新生成</button></div>`;
-  }
-  area.innerHTML = html;
-}
-
-function renderCharacter(area, isBlocked) {
-  const names = ['林风','雪儿','露娜','小花'];
-  const roles = ['程序员/穿越者','白色猫娘/温柔','黑猫猫娘/傲娇','花猫猫娘/活泼'];
-  let html = `<div style="font-size:16px;margin-bottom:12px">🎭 <strong>角色定妆照</strong></div><div class="char-grid">`;
-  names.forEach((n,i) => {
-    html += `<div class="char-card" onclick="showToast('${n} 大图预览')">
-      <div class="avatar"><img src="${CHAR_IMAGES[i%CHAR_IMAGES.length]}" alt="" onerror="this.parentElement.textContent='${['👨','👩','👩','👧'][i]}'"></div>
-      <div class="cname">${n}</div><div class="cmeta">${roles[i]}</div>
-      <div class="regen" onclick="event.stopPropagation();showToast('重新生成 ${n}')">🔄 重新生成</div>
-    </div>`;
-  });
-  html += `</div>`;
-  if (isBlocked) {
-    html += `<div class="review-banner" style="margin-top:14px"><span>⏸️</span> 定妆照已生成，请确认角色形象无误后继续生产</div>
-      <div class="review-buttons"><button class="btn btn-primary" onclick="approve()">✅ 确认无误，继续生产</button>
-      <button class="btn btn-danger" onclick="reject()">❌ 重新生成该角色</button></div>`;
-  }
-  area.innerHTML = html;
+function getDataFromSnapshot(agentKey) {
+  if (!snapshot || !snapshot[agentKey]) return null;
+  return snapshot[agentKey];
 }
 
 function renderImage(area, isRunning, isDone) {

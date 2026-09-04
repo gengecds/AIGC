@@ -1,0 +1,61 @@
+# ═══ 视频 · 运镜与镜头语言 ═══
+# 来源：抖音《小白分镜镜头拍摄整理①》《做视频没电影感？缺一套运镜清单》
+#       《20秒get！电影大师的AI运镜提示词》《必学AI技巧｜运镜提示词分享》
+groups:
+  - name: 推镜头
+    en: "dolly in / push in"
+    neg: ""
+    words:
+      - { zh: 缓慢推进, en: "slow push-in toward subject, dolly in" }
+      - { zh: 焦点渐近, en: "gradually closing distance, focus drawing nearer" }
+      - { zh: 主体放大, en: "subject grows larger in frame, intensified presence" }
+  - name: 拉镜头
+    en: "dolly out / pull out"
+    neg: ""
+    words:
+      - { zh: 缓慢拉远, en: "slow pull-out, dolly back revealing environment" }
+      - { zh: 环境交代, en: "widening view, exposing surroundings and context" }
+      - { zh: 人物渺小, en: "subject becomes small in wide frame, sense of scale" }
+  - name: 摇镜头
+    en: "pan"
+    neg: ""
+    words:
+      - { zh: 水平摇摄, en: "horizontal pan across scene, sweeping motion" }
+      - { zh: 跟随摇镜, en: "panning to follow subject movement" }
+  - name: 移镜头
+    en: "track / truck"
+    neg: ""
+    words:
+      - { zh: 横向移动, en: "lateral tracking shot, camera gliding sideways" }
+      - { zh: 平行跟随, en: "trucking alongside subject in parallel motion" }
+  - name: 环绕镜头
+    en: "orbit / revolve"
+    neg: ""
+    words:
+      - { zh: 环绕主体, en: "orbiting the subject, slow revolution around character" }
+      - { zh: 旋转揭示, en: "circular camera move revealing new angles, 360 spin" }
+  - name: 升降镜头
+    en: "crane / pedestal"
+    neg: ""
+    words:
+      - { zh: 镜头抬升, en: "crane rising upward, camera lifting over the scene" }
+      - { zh: 俯视下降, en: "descending bird's-eye to eye-level, crane down" }
+  - name: 甩镜头
+    en: "whip pan / swish"
+    neg: ""
+    words:
+      - { zh: 快速甩切, en: "rapid whip pan, fast swish between scenes" }
+      - { zh: 动感转场, en: "motion-blur fast pan as a dynamic transition" }
+  - name: 闯入式镜头
+    en: "intrusion shot"
+    neg: ""
+    words:
+      - { zh: 突然探入, en: "intrusion shot, camera suddenly pushes into frame" }
+      - { zh: 斯皮尔伯格式闯入, en: "Spielberg-style intrusion, subject reacting to camera entering" }
+  - name: 电影运镜风格
+    en: "cinematic camera style"
+    neg: ""
+    words:
+      - { zh: 迈克尔贝式铺陈, en: "Michael Bay sweeping crane and wide establishing shots" }
+      - { zh: 摄影机真实视角, en: "real camera viewpoint, immersive cinematographer perspective" }
+      - { zh: 手持真实感, en: "subtle handheld shake, organic camera breathing" }

@@ -10,7 +10,53 @@ from datetime import datetime
 from agents.base import Agent, AgentResult
 from providers.base import ImageProvider
 
+# 影视级质感英文关键词（出图时统一注入，提升"一眼真实"感）
+from agents.research_agent import RENDER_ENGINE_EN, LIGHTING_EN
+
+# ── Skills 知识库：质量下限（无条件注入，专治"人不像人鬼不像鬼"）──
+# photoreal_block()：摄影师实拍质感；anatomy_block()：人体结构/一致性；
+# anatomy_negative()：畸形脸/多余手指/插画感等要禁绝的词。
+# shot_topic_name()/category_block()：据分镜自动匹配题材词块（有角色→人物组；
+#   无人物→ scene/action/background 中文匹配，未命中再基于 sd_prompt 兜底匹配英文题材）。
+from skills.resolver import (
+    photoreal_block, anatomy_block,
+    anatomy_negative, emotion_micro_block,
+    shot_topic_name, category_block,
+)
+
 logger = logging.getLogger(__name__)
+
+# 每镜 sd_prompt 固定追加的质感词（避免重复冗长，挑代表性组合）
+_QUALITY_TAIL = ", " + ", ".join(RENDER_ENGINE_EN[:2] + LIGHTING_EN[:2]) + ", masterpiece, best quality, highly detailed, photorealistic, 8k"
+
+# 负向词：基础 anatomy_negative 无条件追加到每个镜头的 sd_negative
+_SKILLS_NEGATIVE = anatomy_negative()
+
+
+def _shot_skills(shot: dict) -> str:
+    """为单镜叠加 Skills 词块。
+
+    - 题材词块（分层匹配，专注"无人物镜头"的清与准）：
+        1) 有角色 → 人物组（单人电影特写 / 群体合影）；
+        2) 无人物 → 先用 scene/action/background 中文匹配（自然/建筑/商品等）；
+        3) 仍未命中 → 兜底匹配英文 sd_prompt（shot_topic_name 已内置该策略）。
+    - 无条件：摄影师实拍质感 + 人体结构
+    - 人物近景/特写：再叠加微表情词（让角色"有戏"而不像摆拍）
+    """
+    parts = []
+    topic_name = shot_topic_name(shot)
+    topic_block = category_block("image/topic", topic_name) if topic_name else ""
+    if topic_block:
+        parts.append(topic_block)
+    parts.extend([photoreal_block(), anatomy_block()])
+    shot_type = shot.get("shot_type", "")
+    chars = shot.get("characters") or []
+    if chars and shot_type in ("近", "特写", "近景", "大特写"):
+        hint = shot.get("emotion") or shot.get("action") or ""
+        emo = emotion_micro_block(hint)
+        if emo:
+            parts.append(emo)
+    return ", ".join([p for p in parts if p])
 
 
 class ImageGenAgent(Agent):
@@ -50,15 +96,27 @@ class ImageGenAgent(Agent):
                 if character_assets and first_char:
                     asset = character_assets.get(first_char, {})
                     ref_path = asset.get("controlnet_ref_path")
+                # 原始 sd_prompt + 风格合并关键词（多风格自由组合）+ Skills 质量块 + 影视级质感词
+                from config.style_resolver import style_keywords
+                _style_kw = style_keywords()
+                _skills = _shot_skills(shot)
+                prompt = shot.get("sd_prompt", "")
+                if _style_kw:
+                    prompt = f"{prompt}, {', '.join(_style_kw)}" if prompt else ", ".join(_style_kw)
+                if _skills:
+                    prompt = f"{prompt}, {_skills}" if prompt else _skills
                 shot_data.append({
                     "shot_id": str(shot["shot_id"]),
-                    "sd_prompt": shot.get("sd_prompt", ""),
-                    "sd_negative": shot.get("sd_negative", ""),
+                    "sd_prompt": (prompt + _QUALITY_TAIL).strip(),
+                    "sd_negative": (shot.get("sd_negative", "").strip() + ", " + _SKILLS_NEGATIVE).strip()
+                                     if shot.get("sd_negative", "").strip() else _SKILLS_NEGATIVE,
                     "seed": shot.get("seed", -1),
                     "ref_image": ref_path,
                     "controlnet_type": "control_v11p_sd15_canny",
                     "controlnet_image": ref_path,
-                    "controlnet_strength": 0.65,
+                    "controlnet_strength": 0.8,
+                    "width": int(shot.get("width", 768)),
+                    "height": int(shot.get("height", 768)),
                 })
 
             # batch_generate 返回 list[dict]，转为 {shot_id: file_info} 格式

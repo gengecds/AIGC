@@ -1,30 +1,23 @@
-"""Agent 5 - 图生视频（Phase 2: ComfyUI+HunyuanVideo）
+"""Agent 5 - 图生视频（本地 MLX 引擎：LTX-2.3）
 
-传入图片列表 → ComfyUI+HunyuanVideo 批量图生视频 → 输出视频分段
-支持自动从 GPU 下载视频/帧合成
+传入分镜图列表 → LTX-2.3 MLX 原生引擎批量图生视频 → 输出 mp4 分段
+视频由 ltx-2-mlx CLI 直接生成到 storage/output，不走 ComfyUI。
 """
 
 import logging
 import os
-import subprocess as sp
-import asyncio
 from datetime import datetime
 from pathlib import Path
 
 from agents.base import Agent, AgentResult
 from providers.base import VideoProvider
+from skills.resolver import shot_camera_block, shot_genre_block, shot_use_block
 
 logger = logging.getLogger(__name__)
 
-# GPU SSH 配置（优先环境变量，否则用默认值）
-GPU_HOST = os.environ.get("GPU_HOST", "root@connect.bjb2.seetacloud.com")
-GPU_PORT = os.environ.get("GPU_PORT", "30476")
-GPU_PASS = os.environ.get("GPU_PASS", "900917_19871002-Gz")
-GPU_OUTPUT_DIR = "/root/ComfyUI/output"
-
 
 class VideoGenAgent(Agent):
-    """Agent 5：批量图生视频"""
+    """Agent 5：批量图生视频（本地 LTX-2.3 MLX）"""
 
     name = "video_agent"
 
@@ -34,12 +27,25 @@ class VideoGenAgent(Agent):
         self.use_comfyui = use_comfyui
         if video_provider is not None:
             self.video_provider = video_provider
-        elif use_comfyui and comfy_client:
-            from providers.comfyui_provider import ComfyHunyuanVideoProvider
-            self.video_provider = ComfyHunyuanVideoProvider(client=comfy_client)
+        elif use_comfyui:
+            # 固定用 LTX-2.3 MLX 本地引擎（配置/风格若还指向 minimax_h3 等已废弃引擎，
+            # 也一律按 ltx_mlx 处理，见 _make_comfy_provider 内注释）
+            self.video_provider = self._make_mlx_provider()
         else:
             from providers.mock_provider import MockVideoProvider
             self.video_provider = MockVideoProvider()
+
+    @staticmethod
+    def _make_mlx_provider():
+        """创建视频 Provider：只支持 LTX-2.3 MLX 本地引擎。
+
+        历史背景：config.yaml engine.video_engine 曾支持 'ltx'/'minimax_h3' 多引擎，
+        对应 ComfyUI 视频 Provider 已随模型一并删除；视频统一走 MLX 原生引擎，
+        故这里不再做引擎分发，直接返回 LTXMLXVideoProvider。
+        """
+        from providers.ltx_mlx_provider import LTXMLXVideoProvider
+        logger.info("[VideoGenAgent] 视频引擎: LTX-2.3 MLX (本地原生, 9:16)")
+        return LTXMLXVideoProvider()
 
     async def run(self, images_result, storyboard: dict | None = None) -> AgentResult:
         logger.info("[VideoGenAgent] 开始图生视频")
@@ -51,6 +57,41 @@ class VideoGenAgent(Agent):
 
         images = images_data.get("images", {}) or {}
 
+        # 解析分镜时长：shot_id → duration(秒)，用于决定每段视频生成长度
+        # 短镜头切太快会显得"AI 味重"，真人广告镜头一般 3.5-5 秒
+        sb_data = storyboard.data if hasattr(storyboard, "data") else (storyboard or {})
+        sb_data = sb_data or {}
+        durations: dict[str, int] = {}
+        shot_map: dict[str, dict] = {}
+        for ep in sb_data.get("episodes", []) or []:
+            for shot in ep.get("shots", []) or []:
+                sid = str(shot.get("shot_id"))
+                durations[sid] = int(shot.get("duration", 5))
+                shot_map[sid] = shot
+
+        def _shot_length(sid: str) -> int:
+            # 时长(秒) × 25fps → LTX 帧数；限制在 3.5s~5.2s，避免单段过长生成太慢
+            d = durations.get(str(sid), 5)
+            return max(88, min(129, int(d * 25)))
+
+        def _shot_prompt(shot: dict | None) -> str:
+            """按分镜内容自动拼装视频提示词：场景描述 + 运镜/题材/用途词块。
+
+            不从"用户给了什么词"照搬，而是用 resolver 对 camera_movement/
+            scene/action/background 等字段做中英文推断，取出对应整套镜头语言配方，
+            让 LTX 拿到可执行的运动描述，而非回退到默认 "cinematic motion..."。
+            """
+            if not shot:
+                return ""
+            parts = []
+            sd = str(shot.get("sd_prompt") or "").strip()
+            if sd:
+                parts.append(sd)
+            for block in (shot_camera_block(shot), shot_genre_block(shot), shot_use_block(shot)):
+                if block:
+                    parts.append(block)
+            return ", ".join(parts)
+
         all_results = {}
         for ep_key, ep_images in images.items():
             video_data = []
@@ -60,38 +101,26 @@ class VideoGenAgent(Agent):
                     "image_path": img_info.get("filename", ""),
                     "subfolder": img_info.get("subfolder", ""),
                     "prompt_id": img_info.get("prompt_id", ""),
+                    "prompt": _shot_prompt(shot_map.get(str(sid))),
+                    "length": _shot_length(sid),
                 })
 
             videos = await self.video_provider.batch_generate(video_data)
 
-            # 处理返回结果：如果是帧列表，合成+下载
+            # 处理返回结果：LTX/Mock 都返回视频文件（webm/mp4），复制到本地
             output_dir = Path("storage/output")
             output_dir.mkdir(parents=True, exist_ok=True)
 
             ep_videos = {}
             for item in videos:
                 sid = item.get("shot_id", "")
-                frames = item.get("frames", [])
-                if frames:
-                    # 帧模式：在 GPU 上合成视频并下载
-                    video_path = await self._sync_video_from_frames(
-                        frames, sid, ep_key, output_dir
-                    )
-                    ep_videos[sid] = {
-                        "frames": frames,
-                        "total_frames": len(frames),
-                        "local_path": video_path,
-                        "shot_id": sid,
-                    }
-                else:
-                    # 视频文件模式（mock 或直接返回路径）
-                    fname = item.get("filename", "")
-                    local_path = await self._download_maybe(fname, output_dir)
-                    ep_videos[sid] = {
-                        "local_path": local_path or fname,
-                        "filename": fname,
-                        "shot_id": sid,
-                    }
+                fname = item.get("filename", "")
+                local_path = await self._download_maybe(fname, output_dir)
+                ep_videos[sid] = {
+                    "local_path": local_path or fname,
+                    "filename": fname,
+                    "shot_id": sid,
+                }
 
             all_results[ep_key] = ep_videos
 
@@ -108,92 +137,11 @@ class VideoGenAgent(Agent):
             },
         )
 
-    async def _sync_video_from_frames(
-        self, frames: list[dict], shot_id: str, ep_key: str, output_dir: Path
-    ) -> str:
-        """在 GPU 上合成 PN G 帧为 MP4 并下载到本地
-        输入 frames: [{"filename": "hyvideo_output_00001_.png"}, ...] 每组 25 帧
-        """
-        if not frames:
-            return ""
-
-        local_path = str(output_dir / f"{ep_key}_shot_{shot_id}.mp4")
-        if Path(local_path).exists():
-            return local_path
-
-        fnames = [f["filename"] for f in frames]
-        fps = 24
-        remote_dir = GPU_OUTPUT_DIR
-        remote_out = f"{remote_dir}/{ep_key}_shot_{shot_id}.mp4"
-
-        # 在 GPU 上用 concat demuxer 合成（适用于任意编号的帧，不依赖顺序 pattern）
-        concat_file = f"/tmp/concat_{ep_key}_{shot_id}.txt"
-        concat_lines = "\n".join(f"file '{remote_dir}/{f}'" for f in fnames)
-        
-        full_cmd = (
-            f"printf '%s' '{concat_lines}' > {concat_file} && "
-            f"/root/miniconda3/bin/ffmpeg -y -framerate {fps} "
-            f"-f concat -safe 0 -i {concat_file} "
-            f"-c:v libvpx-vp9 -b:v 1M -pix_fmt yuv420p {remote_out}"
-        )
-        ssh_cmd = (
-            f"sshpass -p '{GPU_PASS}' ssh -o StrictHostKeyChecking=no "
-            f"-p {GPU_PORT} {GPU_HOST} '{full_cmd}'"
-        )
-
-        try:
-            proc = await asyncio.create_subprocess_shell(
-                ssh_cmd, stdout=sp.PIPE, stderr=sp.PIPE
-            )
-            _, stderr = await asyncio.wait_for(proc.communicate(), timeout=120)
-            if proc.returncode != 0:
-                err = stderr.decode()[-300:] if stderr else "unknown"
-                logger.warning(f"[VideoGenAgent] GPU 合成失败: {err}")
-                return ""
-        except asyncio.TimeoutError:
-            logger.warning(f"[VideoGenAgent] GPU 合成超时")
-            return ""
-        except Exception as e:
-            logger.warning(f"[VideoGenAgent] GPU 合成异常: {e}")
-            return ""
-
-        # 下载回本地
-        dl_cmd = (
-            f"sshpass -p '{GPU_PASS}' scp -o StrictHostKeyChecking=no "
-            f"-P {GPU_PORT} {GPU_HOST}:{remote_out} {local_path}"
-        )
-        try:
-            proc = await asyncio.create_subprocess_shell(dl_cmd)
-            await proc.communicate()
-            if Path(local_path).exists():
-                sz = Path(local_path).stat().st_size
-                logger.info(f"[VideoGenAgent] 合成+下载完成: {local_path} ({sz/1024:.0f}KB)")
-                return local_path
-        except Exception as e:
-            logger.warning(f"[VideoGenAgent] 下载失败: {e}")
-        return ""
-
-    async def _download_file(self, remote_path: str, local_path: str) -> str:
-        """从 GPU 下载文件"""
-        cmd = (
-            f"sshpass -p '{GPU_PASS}' scp -o StrictHostKeyChecking=no "
-            f"-P {GPU_PORT} {GPU_HOST}:{remote_path} {local_path}"
-        )
-        try:
-            proc = await asyncio.create_subprocess_shell(
-                cmd, stdout=sp.PIPE, stderr=sp.PIPE
-            )
-            await proc.communicate()
-            if Path(local_path).exists():
-                sz = Path(local_path).stat().st_size
-                logger.info(f"[VideoGenAgent] 下载完成: {local_path} ({sz/1024:.0f}KB)")
-                return local_path
-        except Exception as e:
-            logger.warning(f"[VideoGenAgent] 下载失败: {e}")
-        return ""
-
     async def _download_maybe(self, fname: str, output_dir: Path) -> str:
-        """尝试下载单个文件（非帧模式）"""
+        """获取视频文件到本地 output 目录（本地模式）
+
+        直接从本机 ComfyUI 的 output/ 目录复制，无任何网络/SSH 调用。
+        """
         if not fname:
             return ""
         local_path = str(output_dir / fname)
@@ -202,7 +150,16 @@ class VideoGenAgent(Agent):
         # 如果已经是本地路径，直接返回
         if Path(fname).exists():
             return fname
-        # 否则从 GPU 下载
-        return await self._download_file(
-            f"{GPU_OUTPUT_DIR}/{fname}", local_path
-        )
+        # 从本机 ComfyUI output 目录复制（ComfyUI 生成的文件都在这里）
+        comfy_output = Path(os.environ.get(
+            "COMFY_OUTPUT_DIR",
+            "/Users/a715/git/ComfyUI/ComfyUI-Installs/ComfyUI/ComfyUI/output",
+        ))
+        src = comfy_output / fname
+        if src.exists():
+            import shutil
+            shutil.copy(src, local_path)
+            logger.info(f"[VideoGenAgent] 本地复制: {src} -> {local_path}")
+            return local_path
+        logger.warning(f"[VideoGenAgent] 找不到视频文件: {fname}")
+        return ""

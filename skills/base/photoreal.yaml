@@ -1,0 +1,67 @@
+# ═══ 全球基础：摄影师实拍质感 ═══
+# 这不是某一种风格，而是"任何类型都默认要像专业摄影师拍出来"的质感下限。
+# resolver 会把这段无条件叠加到所有 sd_prompt 里，保证"人像人、物像实拍"。
+# 词条结构固定为 {zh, en, note}，方便自进化引擎 evolve.py 不断学习好词后追加。
+
+# ── 相机/镜头：决定"像不像摄影作品" ──
+camera:
+  - zh: "35mm 定焦镜头"
+    en: "shot on 35mm prime lens"
+    note: "最接近人眼透视，纪实感"
+  - zh: "50mm 人像镜头 f/1.8"
+    en: "85mm portrait lens f/1.8"
+    note: "人像压缩感，虚化好"
+  - zh: "浅景深"
+    en: "shallow depth of field"
+    note: "背景虚化，主体锐利"
+  - zh: "摄影级电影质感"
+    en: "cinematic film look"
+    note: "整体成片质感"
+
+# ── 光线：决定立体感与光影层次 ──
+lighting:
+  - zh: "自然柔光"
+    en: "soft natural lighting"
+    note: "人像安全光影"
+  - zh: "柔和侧逆光"
+    en: "soft rim light, subtle key light from the side"
+    note: "轮廓光，避免平光"
+  - zh: "真实皮肤反光"
+    en: "natural skin specular highlights"
+    note: "皮肤通透感的反光点"
+
+# ── 皮肤/材质：决定"人不像鬼"──
+texture:
+  - zh: "真实皮肤纹理"
+    en: "realistic skin texture, visible pores, fine skin detail"
+    note: "避免塑料脸光"
+  - zh: "真实毛发细节"
+    en: "natural hair strands, subtle flyaways"
+    note: "毛发细节提升真实感"
+  - zh: "物理正确材质"
+    en: "physically based materials, correct subsurface scattering"
+    note: "衣物/道具不塑料"
+
+# ── 画质/层次：决定"像不像高档片子" ──
+quality:
+  - zh: "电影级构图"
+    en: "rule of thirds, negative space, cinematic composition"
+    note: "避免人物正中央摆拍"
+  - zh: "胶片颗粒"
+    en: "fine film grain"
+    note: "去数码感，增加质感"
+  - zh: "高对比层次"
+    en: "rich tonal range, natural contrast"
+    note: "避免灰蒙蒙一片"
+  - zh: "高清细节"
+    en: "sharp details, high dynamic range"
+    note: "细节与宽容度"
+
+# ── 画质词：适配不同底模（SD1.5 / FLUX）──
+boost:
+  - zh: "杰作，最佳质量，超高细节"
+    en: "masterpiece, best quality, ultra detailed"
+    note: "SD 正向画质词"
+  - zh: "电影剧照"
+    en: "cinematic movie still"
+    note: "让画面更像实拍剧照而非插画"

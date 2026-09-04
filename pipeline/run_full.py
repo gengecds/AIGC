@@ -10,6 +10,8 @@ import sys, os, json, asyncio
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
 from pipeline.scheduler import Pipeline
+from agents.intel_agent import IntelligenceAgent
+from agents.research_agent import ResearchAgent
 from agents.script_agent import ScriptAgent
 from agents.storyboard_agent import StoryboardAgent
 from agents.character_agent import CharacterDesignAgent
@@ -21,7 +23,7 @@ from agents.publish_agent import PublishAgent
 
 # ComfyUI 模式
 from providers.comfyui.client import ComfyUIClient
-client = ComfyUIClient(server_addr="127.0.0.1", server_port=18188)
+client = ComfyUIClient(server_addr="127.0.0.1", server_port=8188)
 
 import argparse
 parser = argparse.ArgumentParser()
@@ -43,6 +45,8 @@ if args.mock:
     mock_vid = MockVideoProvider()
     print("⚠️ Mock 模式: 使用 MockProvider（0 API/GPU 费用）")
     agents = [
+        IntelligenceAgent(),  # 情报前置（P2，默认关闭，开关控制是否执行）
+        ResearchAgent(llm_provider=mock_llm),
         ScriptAgent(llm_provider=mock_llm),
         StoryboardAgent(llm_provider=mock_llm),
         CharacterDesignAgent(use_comfyui=False, image_provider=mock_img),
@@ -54,6 +58,8 @@ if args.mock:
     ]
 else:
     agents = [
+        IntelligenceAgent(),  # 情报前置（P2，默认关闭，开关控制是否执行）
+        ResearchAgent(),
         ScriptAgent(),
         StoryboardAgent(),
         CharacterDesignAgent(use_comfyui=True, comfy_client=client),
@@ -85,6 +91,17 @@ async def on_done(final):
         fp = p.get("final_path", "")
         sz = p.get("file_size_kb", 0)
         print(f"  第{p.get('episode_number','')}集: {fp} ({sz}KB)")
+    # 自动触发「生成创作笔记」
+    if final.get("success"):
+        try:
+            from pipeline.notes import generate_note_from_results
+            note_path = await generate_note_from_results(
+                results, user_input=STORY, story_id=None, pipeline_id=final.get("pipeline_id", ""),
+            )
+            if note_path:
+                print(f"📝 创作笔记已生成: {note_path}")
+        except Exception as e:
+            print(f"⚠️ 生成创作笔记失败: {e}")
     print(f"{'='*50}")
 
 async def on_review(agent_name, reason, data):

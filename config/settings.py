@@ -39,21 +39,7 @@ class Settings:
             return yaml.safe_load(f) or {}
 
     def _apply_env_overrides(self):
-        """环境变量覆盖"""
-        mapping = {
-            "DEEPSEEK_API_KEY": ("deepseek", "api_key"),
-            "TONGYI_API_KEY": ("tongyi", "api_key"),
-            "GPU_HOST": ("comfyui", "gpu_host"),
-            "GPU_PORT": ("comfyui", "gpu_port"),
-            "GPU_PASS": ("comfyui", "gpu_pass"),
-        }
-        for env_key, (section, field) in mapping.items():
-            val = os.environ.get(env_key)
-            if val:
-                if section not in self._data:
-                    self._data[section] = {}
-                self._data[section][field] = val
-
+        """环境变量覆盖（本地模式：仅引擎选择支持环境变量覆盖）"""
         # 引擎覆盖
         img_prov = os.environ.get("IMAGE_PROVIDER")
         if img_prov:
@@ -64,6 +50,10 @@ class Settings:
         llm_prov = os.environ.get("LLM_PROVIDER")
         if llm_prov:
             self._data.setdefault("engine", {})["llm_provider"] = llm_prov
+        # 情报站能力开关（默认关闭；True/1/yes 时开启）
+        intel_enabled = os.environ.get("INTEL_ENABLED")
+        if intel_enabled is not None:
+            self._data.setdefault("intel", {})["enabled"] = intel_enabled.lower() in ("true", "1", "yes")
 
     def __getattr__(self, name: str) -> Any:
         if name.startswith("_"):

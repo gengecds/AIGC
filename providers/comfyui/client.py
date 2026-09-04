@@ -91,13 +91,30 @@ class ComfyUIClient:
 
     # ── 模型管理 ──────────────────────────────
 
+    # 模型类别 → (节点类型, 输入字段名)：用于枚举本机已安装的模型
+    MODEL_NODE_MAP = {
+        "checkpoints": ("CheckpointLoaderSimple", "ckpt_name"),
+        "diffusion_models": ("UnetLoaderGGUFAdvanced", "unet_name"),
+        "text_encoders": ("CLIPLoader", "clip_name"),
+        "vae": ("VAELoader", "vae_name"),
+    }
+
     async def list_models(self, model_type: str = "checkpoints") -> list:
-        """列出已安装模型"""
+        """列出已安装模型。
+
+        按 model_type 从 ComfyUI /object_info 读取对应节点所需的模型列表：
+        - checkpoints（出图 SD/FLUX checkpoint，含 LTX-Video 视频模型，经 CheckpointLoaderSimple 加载）
+        - diffusion_models（扩散模型，如 FLUX.1 GGUF / LTX-Video diffusion，经 UnetLoaderGGUFAdvanced 加载）
+        - text_encoders / vae
+        """
+        node_cls, field_name = self.MODEL_NODE_MAP.get(
+            model_type, self.MODEL_NODE_MAP["checkpoints"]
+        )
         info = await self.get_object_info()
-        ckpt_node = info.get("CheckpointLoaderSimple", {})
-        ckpt_input = ckpt_node.get("input", {}).get("required", {})
-        ckpts = ckpt_input.get("ckpt_name", [None])[0]
-        return ckpts if isinstance(ckpts, list) else []
+        node_info = info.get(node_cls, {})
+        req = node_info.get("input", {}).get("required", {})
+        opts = req.get(field_name, [None])[0]
+        return opts if isinstance(opts, list) else []
 
     # ── 生成工作流 ────────────────────────────
 
@@ -155,6 +172,92 @@ class ComfyUIClient:
             "9": {
                 "class_type": "SaveImage",
                 "inputs": {"filename_prefix": "comfyui_output", "images": ["8", 0]},
+            },
+        }
+
+    @staticmethod
+    def build_flux_txt2img_workflow(
+        unet_name: str = "flux1-schnell-Q5_K_S.gguf",
+        dequant_dtype: str = "default",
+        clip_l: str = "clip_l.safetensors",
+        t5xxl: str = "t5xxl_fp8_e4m3fn.safetensors",
+        vae_name: str = "ae.safetensors",
+        prompt: str = "",
+        width: int = 1024,
+        height: int = 1024,
+        seed: int = 42,
+        steps: int = 4,
+        cfg: float = 1.0,
+        sampler: str = "euler",
+        scheduler: str = "simple",
+        batch_size: int = 1,
+    ) -> dict:
+        """构建 FLUX.1 文生图工作流（UNET + DualCLIP + VAE）
+
+        参照 ComfyUI 官方 "Text to Image (Flux.1 Dev)" 蓝图：
+            UNETLoader → DualCLIPLoader(clip_l, t5xxl, "flux") + VAELoader
+            → CLIPTextEncode(prompt) + ConditioningZeroOut(负面词零化)
+            → EmptySD3LatentImage → KSampler → VAEDecode → SaveImage
+
+        FLUX-schnell 建议 steps≈4、cfg≈1.0、sampler=euler、scheduler=simple；
+        负面词通过 ConditioningZeroOut 零化（不用负面提示词）。
+        """
+        return {
+            "3": {
+                "class_type": "KSampler",
+                "inputs": {
+                    "seed": seed,
+                    "steps": steps,
+                    "cfg": cfg,
+                    "sampler_name": sampler,
+                    "scheduler": scheduler,
+                    "denoise": 1.0,
+                    "model": ["4", 0],
+                    "positive": ["7", 0],
+                    "negative": ["8", 0],
+                    "latent_image": ["9", 0],
+                },
+            },
+            "4": {
+                "class_type": "UnetLoaderGGUFAdvanced",
+                "inputs": {
+                    "unet_name": unet_name,
+                    "dequant_dtype": dequant_dtype,
+                    "patch_dtype": "default",
+                    "patch_on_device": False,
+                },
+            },
+            "5": {
+                "class_type": "DualCLIPLoader",
+                "inputs": {
+                    "clip_name1": clip_l,
+                    "clip_name2": t5xxl,
+                    "type": "flux",
+                },
+            },
+            "6": {
+                "class_type": "VAELoader",
+                "inputs": {"vae_name": vae_name},
+            },
+            "7": {
+                "class_type": "CLIPTextEncode",
+                "inputs": {"text": prompt, "clip": ["5", 0]},
+            },
+            "8": {
+                "class_type": "ConditioningZeroOut",
+                "inputs": {"conditioning": ["7", 0]},
+            },
+            "9": {
+                "class_type": "EmptySD3LatentImage",
+                "inputs": {"width": width, "height": height, "batch_size": batch_size},
+            },
+            "10": {
+                "class_type": "VAEDecode",
+                "inputs": {"samples": ["3", 0], "vae": ["6", 0]},
+            },
+            "11": {
+                "class_type": "SaveImage",
+                "inputs": {"filename_prefix": "flux_output", "images": ["10", 0]},
             },
         }
 
@@ -239,111 +342,6 @@ class ComfyUIClient:
             "15": {"class_type": "SaveImage", "inputs": {"filename_prefix": "ipadapter_output", "images": ["14", 0]}},
         }
 
-    @staticmethod
-    def build_img2video_workflow(
-        input_image_path: str,
-        model_name: str = "hunyuan_video",
-        prompt: str = "",
-        duration: int = 5,
-        width: int = 512,
-        height: int = 512,
-    ) -> dict:
-        """构建图生视频工作流 (HunyuanVideo)
-
-        使用远程 GPU 上已验证通过的 Kijai HyVideo 节点套件。
-        配置: 25帧/15步/512x512, fp8_e4m3fn_fast 防 OOM。
-        """
-        num_frames = max(9, duration * 5)  # ~5fps
-        guided_scale = 6.0
-        return {
-            "load_image": {
-                "class_type": "LoadImage",
-                "inputs": {"image": input_image_path},
-            },
-            "vae_loader": {
-                "class_type": "HyVideoVAELoader",
-                "inputs": {
-                    "model_name": "hunyuan_video_vae_bf16.safetensors",
-                    "precision": "bf16",
-                },
-            },
-            "text_encoder": {
-                "class_type": "DownloadAndLoadHyVideoTextEncoder",
-                "inputs": {
-                    "llm_model": "Kijai/llava-llama-3-8b-text-encoder-tokenizer",
-                    "clip_model": "disabled",
-                    "precision": "bf16",
-                    "apply_final_norm": False,
-                    "hidden_state_skip_layer": 2,
-                    "quantization": "disabled",
-                },
-            },
-            "model_loader": {
-                "class_type": "HyVideoModelLoader",
-                "inputs": {
-                    "model": "HunyuanVideo/hunyuan_video_720_cfgdistill_fp8_e4m3fn.safetensors",
-                    "base_precision": "bf16",
-                    "quantization": "fp8_e4m3fn_fast",
-                    "load_device": "main_device",
-                },
-            },
-            "text_encode": {
-                "class_type": "HyVideoTextEncode",
-                "inputs": {
-                    "text_encoders": ["text_encoder", 0],
-                    "prompt": prompt,
-                    "force_offload": True,
-                    "prompt_template": "video",
-                },
-            },
-            "video_encode": {
-                "class_type": "HyVideoEncode",
-                "inputs": {
-                    "vae": ["vae_loader", 0],
-                    "image": ["load_image", 0],
-                    "enable_vae_tiling": True,
-                    "temporal_tiling_sample_size": 64,
-                    "spatial_tile_sample_min_size": 256,
-                    "auto_tile_size": True,
-                },
-            },
-            "sampler": {
-                "class_type": "HyVideoSampler",
-                "inputs": {
-                    "model": ["model_loader", 0],
-                    "hyvid_embeds": ["text_encode", 0],
-                    "width": width,
-                    "height": height,
-                    "num_frames": num_frames,
-                    "steps": 15,
-                    "embedded_guidance_scale": guided_scale,
-                    "flow_shift": 9.0,
-                    "seed": 42,
-                    "force_offload": True,
-                    "samples": ["video_encode", 0],
-                    "denoise_strength": 0.8,
-                },
-            },
-            "video_decode": {
-                "class_type": "HyVideoDecode",
-                "inputs": {
-                    "vae": ["vae_loader", 0],
-                    "samples": ["sampler", 0],
-                    "enable_vae_tiling": True,
-                    "temporal_tiling_sample_size": 64,
-                    "spatial_tile_sample_min_size": 256,
-                    "auto_tile_size": True,
-                },
-            },
-            "save": {
-                "class_type": "SaveImage",
-                "inputs": {
-                    "filename_prefix": "hyvideo_output",
-                    "images": ["video_decode", 0],
-                },
-            },
-        }
-
     # ── 同步等待执行完成 ──────────────────────
 
     async def wait_for_completion(
@@ -363,7 +361,20 @@ class ComfyUIClient:
             if prompt_id not in running_ids and prompt_id not in pending_ids:
                 # 执行完成，获取结果
                 history = await self.get_history(prompt_id)
-                outputs = history.get(prompt_id, {}).get("outputs", {})
+                info = history.get(prompt_id, {})
+                outputs = info.get("outputs", {})
+                status = info.get("status", {})
+                if not status.get("completed", False):
+                    err_msg = "unknown error"
+                    for mt, md in status.get("messages", []):
+                        if mt == "execution_error":
+                            err_msg = md.get("exception_message", err_msg)
+                    return {
+                        "success": False,
+                        "prompt_id": prompt_id,
+                        "error": err_msg,
+                        "outputs": outputs,
+                    }
                 return {
                     "success": True,
                     "prompt_id": prompt_id,
