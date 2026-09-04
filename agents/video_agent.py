@@ -96,9 +96,13 @@ class VideoGenAgent(Agent):
         for ep_key, ep_images in images.items():
             video_data = []
             for sid, img_info in ep_images.items():
+                # 关键：image_agent 存的是 ComfyUI 的文件名（图片实体在 ComfyUI
+                # output 目录）。LTX 需要本地真实文件，这里先同步落地成绝对路径。
+                from providers.comfyui_provider import sync_image_to_local
+                image_path = sync_image_to_local(img_info) or img_info.get("filename", "")
                 video_data.append({
                     "shot_id": sid,
-                    "image_path": img_info.get("filename", ""),
+                    "image_path": image_path,
                     "subfolder": img_info.get("subfolder", ""),
                     "prompt_id": img_info.get("prompt_id", ""),
                     "prompt": _shot_prompt(shot_map.get(str(sid))),

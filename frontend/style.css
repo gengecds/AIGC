@@ -559,6 +559,10 @@ body {
 .video-detail-item video, .compose-player video {
   width: 100%; border-radius: 8px; background: #000;
 }
+/* 下载成片：把按钮样式用于 <a>，需要解除 inline 的换行与下划线 */
+.compose-player a.btn {
+  display: inline-block; text-decoration: none; text-align: center;
+}
 
 .subtitle-line { font-family: var(--font-mono); font-size: 12px; padding: 3px 0; color: var(--text-1); }
 .subtitle-line .time { color: var(--gold); }

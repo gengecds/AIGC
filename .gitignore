@@ -42,3 +42,8 @@ build/
 .DS_Store
 .env
 logs/
+
+# 本地引擎 / 日志 / 运行时产物
+tools/
+_monitor.log
+*.log

@@ -65,7 +65,7 @@
 
     <!-- 输入区 -->
     <section class="hero">
-      <div class="hero-kicker">AI 驱动 · 全本地 · 9 步管线</div>
+      <div class="hero-kicker">AI 驱动 · 全本地 · 10 步管线</div>
       <h1 class="hero-title">把一句话，变成一支片子</h1>
       <textarea id="storyInput" rows="3" placeholder="键入你的故事，例如：深夜街角的老王锅贴店，金黄酥脆的锅贴出锅，香气吸引路人驻足…">一个程序员穿越到全是猫娘的世界，被当成稀有物种保护起来</textarea>
       <div class="style-picker-row">
@@ -74,6 +74,7 @@
       </div>
       <div class="hero-controls">
         <button class="btn btn-primary" id="generateBtn">开始制作</button>
+        <button class="btn btn-ghost" id="resumeBtn" style="display:none" title="从最近一次断点继续，跳过已完成的步骤">⏯ 断点续跑</button>
         <button class="btn btn-danger" id="stopBtn" style="display:none">停止</button>
       </div>
       <div class="style-info" id="styleInfo"></div>
@@ -135,6 +136,12 @@
           <div class="pipe-icon">音</div>
           <div class="pipe-title">音频</div>
           <div class="pipe-status" id="status-audio">空闲</div>
+        </div>
+        <div class="pipe-card state-idle" data-agent="publish" onclick="window.selectCard && selectCard('publish')">
+          <div class="pipe-step">09</div>
+          <div class="pipe-icon">发</div>
+          <div class="pipe-title">发布</div>
+          <div class="pipe-status" id="status-publish">空闲</div>
         </div>
       </div>
 

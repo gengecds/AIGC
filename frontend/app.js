@@ -7,13 +7,14 @@
   'use strict';
 
   const API = 'http://127.0.0.1:8888';
-  const AGENTS = ['research', 'script', 'storyboard', 'character', 'image', 'video', 'subtitle', 'compose', 'audio'];
-  const AGENT_LABELS = { research: '方案', script: '剧本', storyboard: '分镜', character: '定妆照', image: '出图', video: '视频', subtitle: '字幕', compose: '合成', audio: '音频' };
+  const AGENTS = ['research', 'script', 'storyboard', 'character', 'image', 'video', 'subtitle', 'compose', 'audio', 'publish'];
+  const AGENT_LABELS = { research: '方案', script: '剧本', storyboard: '分镜', character: '定妆照', image: '出图', video: '视频', subtitle: '字幕', compose: '合成', audio: '音频', publish: '发布' };
   // 前端卡片短名 → 后端 Agent 名（checkpoint / snapshot / submit 的键名）
   const BACKEND_AGENT = {
     research: 'research_agent', script: 'script_agent', storyboard: 'storyboard_agent',
     character: 'character_agent', image: 'image_agent', video: 'video_agent',
     subtitle: 'subtitle_agent', compose: 'video_compose_agent', audio: 'audio_agent',
+    publish: 'publish_agent',
   };
   // 反向映射：后端完整 Agent 名 → 前端卡片短名（SSE 事件用的是完整名）
   const SHORT_AGENT = {};
@@ -135,12 +136,14 @@
     cards: {},
     logCount: 0,
     selectedStyles: ['写实风格'],
+    hasCheckpoint: false,
   };
 
   const els = {};
   function collectEls() {
     els.storyInput = $('#storyInput');
     els.generateBtn = $('#generateBtn');
+    els.resumeBtn = $('#resumeBtn');
     els.stopBtn = $('#stopBtn');
     els.progressText = $('#progressText');
     els.progressPct = $('#progressPct');
@@ -929,8 +932,10 @@
             let src = p.final_path || '';
             if (src.includes('/storage/output/')) src = '/storage/output/' + src.split('/storage/output/')[1];
             else if (src) src = '/storage/output/' + src.split('/').pop();
+            const fname = (src || '').split('/').pop() || 'final.mp4';
             return `<div class="compose-player"><strong style="color:var(--gold)">第${p.episode_number || '?'}集 成片</strong><br>` +
-              (src ? `<video controls preload="metadata" src="${src}"></video>` : '<div class="empty-state">⏳</div>') + '</div>';
+              (src ? `<video controls preload="metadata" src="${src}"></video>` : '<div class="empty-state">⏳</div>') +
+              (src ? `<a class="btn btn-primary btn-sm" style="margin-top:6px" href="${src}" download="${esc(fname)}">⬇️ 下载成片</a>` : '') + '</div>';
           }).join('');
           html += editToggleBtn('compose');
           break;
@@ -954,11 +959,37 @@
           if (final.includes('/storage/output/')) final = '/storage/output/' + final.split('/storage/output/')[1];
           else if (final) final = '/storage/output/' + final.split('/').pop();
           if (final) {
+            const fname = final.split('/').pop() || 'final_audio.mp4';
             video = `<div class="compose-player"><strong style="color:var(--gold)">🎬 带音频成片（配音 + BGM + 音效）</strong><br>` +
-              `<video controls preload="metadata" src="${final}"></video></div>`;
+              `<video controls preload="metadata" src="${final}"></video>` +
+              `<a class="btn btn-primary btn-sm" style="margin-top:6px" href="${final}" download="${esc(fname)}">⬇️ 下载成片</a></div>`;
           }
           html = video + vlist + (ad.bgm ? `<div class="side-label">🎵 BGM：柔和钢琴伴奏 · ${ad.duration}s</div>` : '');
           html += editToggleBtn('audio');
+          break;
+        }
+        case 'publish': {
+          // 发布卡：汇总「发布清单 + manifest」，并复用带音频成片的预览/下载入口
+          const pub = snap.publish_agent?.published || snap.publish_agent?.data?.published || [];
+          const manifest = snap.publish_agent?.manifest_path || '';
+          if (approval) {
+            html = hintEdit('发布清单已就绪，可直接修改（发布条目 / manifest 路径）') +
+              editableRoot('publish', snap.publish_agent || {}, '📦 发布（可编辑）');
+            break;
+          }
+          if (!pub.length) { html = '<div class="empty-state">发布中…</div>'; break; }
+          html = pub.map((p) => {
+            let src = p.file_path || '';
+            if (src.includes('/storage/output/')) src = '/storage/output/' + src.split('/storage/output/')[1];
+            else if (src) src = '/storage/output/' + src.split('/').pop();
+            const fname = (src || '').split('/').pop() || 'final.mp4';
+            const size = p.file_size_kb ? `（${(p.file_size_kb / 1024).toFixed(2)} MB）` : '';
+            return `<div class="compose-player"><strong style="color:var(--gold)">📦 第${p.episode_number || '?'}集 已发布 ${size}</strong><br>` +
+              (src ? `<video controls preload="metadata" src="${src}"></video>` : '<div class="empty-state">⏳</div>') +
+              (src ? `<a class="btn btn-primary btn-sm" style="margin-top:6px" href="${src}" download="${esc(fname)}">⬇️ 下载成片</a>` : '') +
+              (manifest ? `<div style="margin-top:6px;font-size:11px;color:var(--text-2)">manifest: ${esc(manifest.split('/').pop())}</div>` : '') + '</div>';
+          }).join('');
+          html += editToggleBtn('publish');
           break;
         }
         default: html = '<div class="empty-state">未知</div>';
@@ -1052,6 +1083,8 @@
         addLog('SUCCESS', 'pipeline', '管线全部完成！');
         doneUI();
         refreshSnapshot();
+        // 自动展开「音频（带音频成片）」详情，方便立刻预览 / 下载成品
+        setTimeout(() => renderDetail('audio', ''), 600);
       });
       es.addEventListener('notes_generated', (e) => {
         try {
@@ -1104,6 +1137,7 @@
           setProgress(100, '✅ 全部完成！');
           doneUI();
           refreshSnapshot();
+          setTimeout(() => renderDetail('audio', ''), 600);
         } else if (d.status === 'failed') {
           setCardState(d.current_agent, 'failed', d.error || '');
           doneUI();
@@ -1125,6 +1159,13 @@
       const resp = await api('/api/v1/pipeline/snapshot/latest');
       if (!resp.ok) return;
       const snap = await resp.json();
+      // 是否有可用断点（任一 agent 落盘过）→ 控制「断点续跑」按钮显隐
+      state.hasCheckpoint = !!(
+        snap.research_agent || snap.script_agent || snap.storyboard_agent ||
+        snap.character_agent || snap.image_agent || snap.video_agent ||
+        snap.video_compose_agent || snap.audio_agent
+      );
+      updateResumeBtn();
       updateAssets(snap);
       updateOverview(snap);
 
@@ -1149,9 +1190,12 @@
         snapDone('compose', `${pub.length}集成片`);
       }
       if (snap.audio_agent?.final_video) snapDone('audio', '有声成片');
+      if ((snap.publish_agent?.published || []).length) {
+        const pub = snap.publish_agent.published;
+        snapDone('publish', `${pub.length}条清单`);
+      }
     } catch (_) { /* ignore */ }
   }
-
   function updateAssets(snap) {
     const ch = snap.character_agent?.characters || [];
     if (els.assetChars) {
@@ -1217,6 +1261,7 @@
     closeDetail();
     setProgress(0, '启动中…');
     if (els.generateBtn) { els.generateBtn.disabled = true; els.generateBtn.textContent = '⏳ 制作中…'; }
+    if (els.resumeBtn) els.resumeBtn.style.display = 'none';
     if (els.stopBtn) els.stopBtn.style.display = '';
     const style = state.selectedStyles && state.selectedStyles.length ? state.selectedStyles : ['写实风格'];
     addLog('INFO', 'pipeline', `启动管线（风格：${style.join(' + ')}）…`);
@@ -1240,10 +1285,68 @@
     }
   }
 
+  // ═══ 断点续跑（resume）═══
+  // 与 startPipeline 的区别：/run 请求带 resume:true，后端从最后一个
+  // 已落盘 checkpoint 之后继续，而不是清空全部重头跑（可跳过已完成的耗时步骤）。
+  async function resumePipeline() {
+    let text = els.storyInput.value.trim();
+    // 输入框没填故事时，回退到最近一次任务的原输入（仅用于通过接口的输入校验，
+    // resume 模式实际执行由 checkpoint 驱动，不依赖该文本重新走 LLM）。
+    if (!text || text.length < 2) {
+      try {
+        const resp = await api('/api/v1/pipeline/history');
+        if (resp.ok) {
+          const h = await resp.json();
+          const recent = (h.history || []).find((x) => x.input && x.input.length >= 2);
+          if (recent) {
+            text = recent.input;
+            if (els.storyInput) els.storyInput.value = text;
+          }
+        }
+      } catch (_) { /* 忽略：继续用原输入 */ }
+    }
+    if (!text || text.length < 2) { addLog('WARN', 'pipeline', '续跑需要先输入一个故事（或存在历史任务）'); return; }
+
+    state.startTime = Date.now();
+    state.running = true;
+    closeDetail();
+    setProgress(0, '从断点续跑…');
+    if (els.generateBtn) { els.generateBtn.disabled = true; els.generateBtn.textContent = '⏳ 续跑中…'; }
+    if (els.resumeBtn) els.resumeBtn.style.display = 'none';
+    if (els.stopBtn) els.stopBtn.style.display = '';
+    const style = state.selectedStyles && state.selectedStyles.length ? state.selectedStyles : ['写实风格'];
+    addLog('INFO', 'pipeline', `断点续跑（风格：${style.join(' + ')}）…`);
+
+    try {
+      const resp = await api('/api/v1/pipeline/run', {
+        method: 'POST',
+        body: { input: text, style, resume: true },
+      });
+      const r = await resp.json();
+      if (r.success) {
+        state.pipelineId = r.pipeline_id;
+        addLog('INFO', 'pipeline', `续跑成功 ID=${r.pipeline_id}`);
+      } else {
+        throw new Error(r.error || '续跑失败');
+      }
+    } catch (e) {
+      doneUI();
+      addLog('ERROR', 'pipeline', '续跑失败: ' + e.message);
+    }
+  }
+
   function doneUI() {
     state.running = false;
     if (els.generateBtn) { els.generateBtn.disabled = false; els.generateBtn.textContent = '开始制作'; }
     if (els.stopBtn) els.stopBtn.style.display = 'none';
+    updateResumeBtn();
+  }
+
+  // ═══ 断点续跑按钮显隐 ═══
+  // 只要后端有 checkpoint（管线中断/部分完成），且当前没在跑，就显示「断点续跑」。
+  function updateResumeBtn() {
+    if (!els.resumeBtn) return;
+    els.resumeBtn.style.display = (!state.running && state.hasCheckpoint) ? '' : 'none';
   }
 
   async function stopPipeline() {
@@ -1768,6 +1871,7 @@
     checkLogin();
 
     if (els.generateBtn) els.generateBtn.addEventListener('click', startPipeline);
+    if (els.resumeBtn) els.resumeBtn.addEventListener('click', resumePipeline);
     if (els.stopBtn) els.stopBtn.addEventListener('click', stopPipeline);
     if (els.detailClose) els.detailClose.addEventListener('click', closeDetail);
     if (els.drawerClose) els.drawerClose.addEventListener('click', closeHistory);

@@ -3,7 +3,7 @@
 用法:
     from config.settings import settings
     settings.engine.image_provider  # → "mock"
-    settings.comfyui.server_port    # → 18188
+    settings.comfyui.server_port    # → 8189（实际值见 config.yaml）
 """
 
 import os

@@ -254,7 +254,17 @@ class Pipeline:
                 logger.info(f"[Pipeline] 从断点恢复: {last_agent} 之后继续")
                 start_idx = AGENTS_PIPELINE.index(last_agent) + 1
                 if start_idx >= len(AGENTS_PIPELINE):
-                    return {"success": True, "pipeline_id": self.pipeline_id, "results": results}
+                    # 所有节点均已落盘（全完成续跑）：走统一完成回调，
+                    # 否则 SSE 不会广播 pipeline_done、_active 状态也不会收尾
+                    final = {
+                        "success": True,
+                        "pipeline_id": self.pipeline_id,
+                        "results": results,
+                        "resumed_complete": True,
+                    }
+                    if self._on_pipeline_complete:
+                        await self._on_pipeline_complete(final)
+                    return final
                 agents_to_run = [a for a in agents if a.name in AGENTS_PIPELINE[start_idx:]]
             else:
                 self.state.clear()

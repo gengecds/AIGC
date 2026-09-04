@@ -7,6 +7,7 @@ ComfyLTXVideoProvider / ComfyMiniMaxH3VideoProvider）。
 
 import logging
 import os
+import shutil
 import requests as _requests
 from typing import Optional
 from pathlib import Path
@@ -21,6 +22,44 @@ def _noget(url, **kw):
     return _requests.get(url, **kw)
 
 logger = logging.getLogger(__name__)
+
+# ComfyUI 桌面版的图片输出目录（FLUX/SD 出图落盘处）。
+# 本机多套 ComfyUI 安装时可通过环境变量 COMFY_OUTPUT_DIR 覆盖。
+COMFY_OUTPUT_DIR = Path(os.environ.get(
+    "COMFY_OUTPUT_DIR",
+    "/Users/a715/git/ComfyUI/ComfyUI-Installs/ComfyUI/ComfyUI/output",
+))
+# AIGC 项目本地图片目录（后续 agent：LTX 图生视频 / ControlNet 参考图都从这里读）
+LOCAL_IMAGE_DIR = Path(os.environ.get(
+    "AIGC_LOCAL_IMAGE_DIR", "storage/output/images",
+))
+
+
+def sync_image_to_local(img_info: dict) -> str:
+    """把 ComfyUI 返回的图片记录同步落地成 AIGC 本地文件，返回本地绝对路径。
+
+    背景：image_agent / character_agent 从 ComfyUI 拿到的只是
+    {filename, subfolder, type, ...} 元信息，图片实体还留在 ComfyUI 的
+    output 目录；而 video_agent(LTX 读图)、ControlNet 上传都需要本机文件。
+    这里把文件从 ComfyUI output 复制到 storage/output/images 并返回新路径，
+    找不到源文件时返回空串（由调用方决定是否跳过/报错）。
+    """
+    fname = (img_info or {}).get("filename") or ""
+    if not fname:
+        return ""
+    LOCAL_IMAGE_DIR.mkdir(parents=True, exist_ok=True)
+    dest = LOCAL_IMAGE_DIR / Path(fname).name
+    if dest.exists():  # 已落地过则直接复用，避免重复复制
+        return str(dest)
+    # ComfyUI 可能把文件放在子目录（subfolder），拼出源文件完整路径
+    subfolder = (img_info or {}).get("subfolder") or ""
+    src = (COMFY_OUTPUT_DIR / subfolder / fname) if subfolder else (COMFY_OUTPUT_DIR / fname)
+    if not src.exists():
+        logger.warning(f"[comfyui] 图片源文件不存在: {src}")
+        return ""
+    shutil.copy(src, dest)
+    logger.info(f"[comfyui] 图片已落地本地: {src} -> {dest}")
+    return str(dest)
 
 
 class ComfySDImageProvider(ImageProvider):
