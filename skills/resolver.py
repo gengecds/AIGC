@@ -246,13 +246,19 @@ def _match_topic(text: str) -> str:
 def shot_topic_name(shot: dict) -> str:
     """据分镜内容推断题材分组名（人物优先，其次 scene/action/background，再兜底 sd_prompt）。
 
-    - 有角色：多人 → 人物与肖像·群体合影；单人 → 人物与肖像·单人电影特写
+    - 有角色：≥3 人 → 人物与肖像·群体合影；单人 → 人物与肖像·单人电影特写；
+      双人 → ""（既非"群体合影"也非"单人特写"，硬套任一词块都会把两三人对手戏
+      渲染成"一大群人在棚里合影"或"单人特写"，交给 sd_prompt 描述更准）
     - 无角色：先用 scene/action/background 的中文匹配；未命中再兜底匹配英文 sd_prompt
     - 未命中返回 ""（上层不注入题材词块）
     """
     chars = shot.get("characters") or []
     if chars:
-        return "人物与肖像·群体合影" if len(chars) > 1 else "人物与肖像·单人电影特写"
+        if len(chars) == 1:
+            return "人物与肖像·单人电影特写"
+        if len(chars) >= 3:
+            return "人物与肖像·群体合影"
+        return ""
     text = " ".join(str(shot.get(k) or "") for k in ("scene", "action", "background"))
     name = _match_topic(text)
     if name:

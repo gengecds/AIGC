@@ -148,6 +148,11 @@ class ResearchAgent(Agent):
         super().__init__(name="research_agent")
         if isinstance(llm_provider, LLMProvider):
             self.llm = llm_provider
+        elif str(llm_provider or "ollama").lower() in ("deepseek", "auto", "config", "ollama"):
+            # 传的是字符串 provider 名（pipeline 里按 config.yaml 的 llm_provider=deepseek 传入）。
+            # 走统一工厂：DeepSeek 无 Key/失败时会自动回退本地 Ollama，不会让研究步骤挂掉。
+            from providers.llm import get_llm_provider
+            self.llm = get_llm_provider(str(llm_provider))
         else:
             self.llm = OllamaProvider()
 
@@ -162,8 +167,8 @@ class ResearchAgent(Agent):
             if materials_text:
                 logger.info("[ResearchAgent] 发现参考素材，纳入方案研究")
 
-            # ── 情报站增强（默认关闭，零破坏）─────────────────────────
-            # 开启 INTEL_ENABLED 时，读取 storage/intel/cases/ 的情报案例，
+            # ── 情报站增强（由 config.intel.enabled/INTEL_ENABLED 决定，零破坏）─────────
+            # 开启时读取 storage/intel/cases/ 的情报案例，
             # 用 BenchmarkEngine 拆解后注入 reference_cases，让方案参考真实爆款。
             intel_context = ""
             try:

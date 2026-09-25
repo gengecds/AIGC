@@ -1,4 +1,4 @@
-"""IntelligenceAgent — 情报采集 + 爆款拆解前置节点（P2，默认关闭、零破坏）。
+"""IntelligenceAgent — 情报采集 + 爆款拆解前置节点（是否执行由 INTEL_ENABLED/config.intel.enabled 决定，零破坏）。
 
 作用：作为管线第一个节点，把「情报站」能力前置到 AIGC。
 - 从情报源读取作品素材（storage/intel/source/ 或 AIGC 自有的 storage/materials/）；
@@ -6,7 +6,7 @@
 - 落盘到 storage/intel/cases/（P1 的 research_agent 已通过 load_reference_context 自动读取）。
 
 零破坏红线（见方案文档 §7.1）：
-- 仅当 INTEL_ENABLED=True 时，调度器才会保留并执行本节点；关闭时按开关跳过，管线走原始路径；
+- 仅当 intel_enabled() 为 True 时，调度器才会保留并执行本节点；关闭时按开关跳过，管线走原始路径；
 - 无情报源时返回 success(count=0)，绝不阻断后续节点；
 - 纯标准库逻辑，不依赖 LLM/GPU/外部采集脚本，mock 与真实模式均可运行。
 """

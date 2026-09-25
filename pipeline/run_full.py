@@ -19,11 +19,17 @@ from agents.image_agent import ImageGenAgent
 from agents.video_agent import VideoGenAgent
 from agents.subtitle_agent import SubtitleAgent
 from agents.video_compose_agent import VideoComposeAgent
+from agents.audio_agent import AudioAgent
 from agents.publish_agent import PublishAgent
 
-# ComfyUI 模式
+# ComfyUI 模式（地址/端口统一读 config.yaml，避免写死后与全局口径不一致）
 from providers.comfyui.client import ComfyUIClient
-client = ComfyUIClient(server_addr="127.0.0.1", server_port=8188)
+from config.settings import settings
+client = ComfyUIClient(
+    server_addr=settings.comfyui.server_addr,
+    server_port=settings.comfyui.server_port,
+    timeout=settings.comfyui.timeout,
+)
 
 import argparse
 parser = argparse.ArgumentParser()
@@ -45,7 +51,7 @@ if args.mock:
     mock_vid = MockVideoProvider()
     print("⚠️ Mock 模式: 使用 MockProvider（0 API/GPU 费用）")
     agents = [
-        IntelligenceAgent(),  # 情报前置（P2，默认关闭，开关控制是否执行）
+        IntelligenceAgent(),  # 情报前置（是否执行由 intel_enabled/INTEL_ENABLED 决定）
         ResearchAgent(llm_provider=mock_llm),
         ScriptAgent(llm_provider=mock_llm),
         StoryboardAgent(llm_provider=mock_llm),
@@ -54,11 +60,12 @@ if args.mock:
         VideoGenAgent(use_comfyui=False, video_provider=mock_vid),
         SubtitleAgent(),
         VideoComposeAgent(),
+        AudioAgent(),
         PublishAgent(),
     ]
 else:
     agents = [
-        IntelligenceAgent(),  # 情报前置（P2，默认关闭，开关控制是否执行）
+        IntelligenceAgent(),  # 情报前置（是否执行由 intel_enabled/INTEL_ENABLED 决定）
         ResearchAgent(),
         ScriptAgent(),
         StoryboardAgent(),
@@ -67,6 +74,7 @@ else:
         VideoGenAgent(use_comfyui=True, comfy_client=client),
         SubtitleAgent(),
         VideoComposeAgent(),
+        AudioAgent(),
         PublishAgent(),
     ]
 

@@ -4,6 +4,7 @@ import json
 import logging
 import asyncio
 import copy
+import time
 from datetime import datetime
 from typing import Dict, List, Optional, Callable, Awaitable, Any
 from pathlib import Path
@@ -88,6 +89,7 @@ class Pipeline:
         self._on_agent_start: Optional[Callable] = None
         self._on_agent_complete: Optional[Callable] = None
         self._on_agent_fail: Optional[Callable] = None
+        self._on_agent_progress: Optional[Callable] = None
         self._on_pipeline_complete: Optional[Callable] = None
         # 审核回调
         self._on_review_needed: Optional[Callable[[str, str, dict], Awaitable]] = None
@@ -95,6 +97,7 @@ class Pipeline:
         self._review_lock.set()
         self._review_data: dict = {}
         self._paused = False
+        self._cancelled = False
 
     def set_callbacks(
         self,
@@ -103,15 +106,28 @@ class Pipeline:
         on_agent_fail: Optional[Callable] = None,
         on_pipeline_complete: Optional[Callable] = None,
         on_review_needed: Optional[Callable] = None,
+        on_agent_progress: Optional[Callable] = None,
     ):
         self._on_agent_start = on_agent_start
         self._on_agent_complete = on_agent_complete
         self._on_agent_fail = on_agent_fail
         self._on_pipeline_complete = on_pipeline_complete
         self._on_review_needed = on_review_needed
+        self._on_agent_progress = on_agent_progress
 
     def approve_review(self):
         self._review_lock.set()
+
+    def cancel(self):
+        """请求取消管线：置标志并唤醒审核等待，让 run() 尽快以取消态退出。"""
+        self._cancelled = True
+        self._review_lock.set()
+        logger.warning(f"[Pipeline] 🛑 收到取消请求: {self.pipeline_id}")
+
+    def _check_cancelled(self):
+        """合作式取消检查点：已请求取消则抛 CancelledError 让任务立即收尾。"""
+        if self._cancelled:
+            raise asyncio.CancelledError(f"pipeline {self.pipeline_id} cancelled")
 
     def reject_review(self):
         self._review_data["rejected"] = True
@@ -151,6 +167,7 @@ class Pipeline:
         return result
 
     async def wait_for_review(self, reason: str, data: dict, agent_name: str):
+        self._check_cancelled()
         self._review_lock.clear()
         self._review_data = {"rejected": False, "reason": reason, "data": data}
         self._paused = True
@@ -159,6 +176,7 @@ class Pipeline:
             await self._on_review_needed(agent_name, reason, data)
         await self._review_lock.wait()
         self._paused = False
+        self._check_cancelled()
         rejected = self._review_data.get("rejected", False)
         logger.info(f"[Pipeline] ▶️ 审核结果: {'拒绝' if rejected else '确认'} {reason}")
         return {"approved": not rejected, "data": self._review_data.get("data", data)}
@@ -173,7 +191,7 @@ class Pipeline:
     @staticmethod
     def _base_pipeline() -> list[str]:
         """官方完整节点顺序（未按模型能力裁剪）。
-        intel_agent 在最前（情报前置，默认关闭，是否执行由 _effective_pipeline 的开关决定）。
+        intel_agent 在最前（情报前置，是否执行由 _effective_pipeline 依据 intel_enabled/INTEL_ENABLED 决定）。
         research_agent 其次：需求 → 制作方案 → 剧本（流程升级）。
         compose_agent 已被 video_compose_agent 取代，不在列表中（否则断点续传永远不连续）。
         """
@@ -193,7 +211,7 @@ class Pipeline:
         """
         from config.capabilities import pipeline_extra, pipeline_skip
         from config.style_resolver import video_model_type_for_style
-        # 情报前置节点由 INTEL_ENABLED 开关控制（默认关闭）；不依赖视频模型能力
+        # 情报前置节点由 intel_enabled()/INTEL_ENABLED 决定（读取 config.intel.enabled）；不依赖视频模型能力
         from intel.service import intel_enabled as _intel_enabled
         video_model = video_model_type_for_style(default="ltx") or "ltx"
         skip = pipeline_skip(video_model)
@@ -201,7 +219,7 @@ class Pipeline:
         order = []
         for name in self._base_pipeline():
             if name == "intel_agent" and not _intel_enabled():
-                logger.info("[Pipeline] 情报能力未开启 (INTEL_ENABLED=False)，跳过节点 intel_agent")
+                logger.info("[Pipeline] 情报能力未开启 (intel_enabled=False)，跳过节点 intel_agent")
                 continue
             if name in skip:
                 logger.info(
@@ -243,6 +261,10 @@ class Pipeline:
             self.agents = kept
 
         total = len(AGENTS_PIPELINE)
+        agent_by_name = {getattr(a, "name", ""): a for a in agents}
+        # 配音预测量（逐句 TTS 真实时长）：分镜/字幕/成片/混音四处共用的时长基准，
+        # 在分镜之前算好并透传给下游；管线无 audio_agent 时保持 None（按分镜默认时长）。
+        voice_plan: list | None = None
 
         if resume:
             last_agent = self.state.get_last_completed_agent(AGENTS_PIPELINE)
@@ -274,6 +296,7 @@ class Pipeline:
             agents_to_run = agents
 
         for agent in agents_to_run:
+            self._check_cancelled()
             logger.info(f"[Pipeline] 开始执行: {agent.name}")
             name = agent.name
             global_idx = AGENTS_PIPELINE.index(name) if name in AGENTS_PIPELINE else 0
@@ -349,7 +372,50 @@ class Pipeline:
                                 self.state.save_checkpoint("research_agent", research_result)
                                 logger.info("[Pipeline] 📝 方案已按用户修改稿合并覆盖")
                 elif name == "storyboard_agent":
+                    # 先跑配音预测量（TTS 真实时长）：分镜按「每句台词一镜」生成，
+                    # 镜头时长 = 该句配音时长 + 停顿，成片时长随之 ≈ 配音总时长，
+                    # 台词逐句顺序落位不重叠、字幕与画面精确对位。
+                    if voice_plan is None:
+                        audio_agent = agent_by_name.get("audio_agent")
+                        if audio_agent is not None and hasattr(audio_agent, "plan_voices"):
+                            try:
+                                # 逐句 TTS 合成较慢（首次含模型加载），先打一条开始日志，
+                                # 让用户在分镜前的等待期能看到管线仍在推进
+                                logger.info("[Pipeline] ⏳ 开始配音预测量（逐句 TTS 合成）…")
+                                t0 = time.time()
+
+                                # plan_voices 跑在线程里，进度回调需切回事件循环才能广播 SSE
+                                loop = asyncio.get_running_loop()
+
+                                def _emit_voice_progress(info: dict):
+                                    cb = self._on_agent_progress
+                                    if cb is None:
+                                        return
+                                    try:
+                                        asyncio.run_coroutine_threadsafe(
+                                            cb("audio_agent", "voice_plan", info), loop
+                                        )
+                                    except Exception:
+                                        pass
+
+                                voice_plan = await asyncio.to_thread(
+                                    audio_agent.plan_voices, script_data,
+                                    on_progress=_emit_voice_progress,
+                                ) or []
+                                total_voice = sum(
+                                    float(p.get("slot") or 0) for p in voice_plan
+                                )
+                                logger.info(
+                                    f"[Pipeline] ✅ 配音预测量: {len(voice_plan)} 句，"
+                                    f"合计 {total_voice:.1f}s，用时 {time.time() - t0:.1f}s"
+                                )
+                            except Exception as e:
+                                logger.warning(
+                                    f"[Pipeline] 配音预测量失败，按分镜默认时长生成: {e}"
+                                )
+                                voice_plan = []
                     result = await retry_async(agent.run, script_data,
+                                               voice_plan=voice_plan,
                                                max_retries=5, retry_delay=8)
                     # 审核断点：分镜完成后等待用户确认/可编辑
                     if enable_review and result.success:
@@ -383,9 +449,11 @@ class Pipeline:
                     if enable_review and result.success:
                         result = await self._editable_review(name, result, "字幕")
                 elif name == "video_compose_agent":
+                    # 传入分镜（每镜时长）→ 成片按分镜拉伸/补齐，与字幕时间轴对齐
                     result = await retry_async(agent.run,
                         AgentResult(success=True, data={"videos": video_data.get("videos", {})}),
                         AgentResult(success=True, data={"subtitles": subtitle_data.get("subtitles", [])}),
+                        storyboard_result=AgentResult(success=True, data=storyboard_data or {}),
                     )
                     # 审核断点：合成完成后等待用户确认/可编辑
                     if enable_review and result.success:
@@ -401,11 +469,16 @@ class Pipeline:
                         compose_data = self._get(results, "compose_agent")
                     # 传入研究方案（BGM 情绪/场景音效）供音频合成使用
                     research_data = self._get(results, "research_agent") or {}
+                    # 传入分镜（镜头时长/角色）用于配音音色分配与时间轴对齐；
+                    # 复用分镜前算好的配音预测量（含已合成 WAV 与逐句真实时长），
+                    # 避免二次 TTS、并保证混音顺序与分镜/字幕完全一致。
                     result = await retry_async(agent.run,
                         AgentResult(success=True, data={"published": compose_data.get("published", [])}),
                         AgentResult(success=True, data=script_data or {}),
                         AgentResult(success=True, data={"srt_files": subtitle_data.get("srt_files", {})}),
                         research_data,
+                        AgentResult(success=True, data=storyboard_data or {}),
+                        voice_plan=voice_plan,
                     )
                     # 审核断点：音频合成后等待用户确认/可编辑
                     if enable_review and result.success:

@@ -20,6 +20,12 @@ def _styles_raw() -> dict:
     return raw.get("styles", {}) or {}
 
 
+def _comfyui_raw() -> dict:
+    """返回 comfyui 原始 dict（同上，绕过 _DictProxy 直接取底层数据）。"""
+    raw = getattr(settings, "_data", {}) or {}
+    return raw.get("comfyui", {}) or {}
+
+
 def list_styles() -> dict:
     """返回所有风格及其配置（含给前端展示的 description/advice/recommended_models）。"""
     return _styles_raw()
@@ -100,6 +106,112 @@ def image_model_type_for_style(name: str | None = None, default: str | None = No
     if entry and entry.get("image_model_type"):
         return entry["image_model_type"]
     return default
+
+
+# IP-Adapter 参数的内置兜底值（config.yaml comfyui.ipadapter 缺字段时用）
+_IPADAPTER_DEFAULTS: dict = {
+    # 默认关闭：配置里不显式打开时，出图链路维持 txt2img / controlnet 原行为
+    "enabled": False,
+    "kind": "ipadapter",  # ipadapter | ipadapter_faceid
+    "preset": "PLUS (high strength)",
+    "weight": 0.7,
+    "faceid_preset": "FACEID PLUS V2",
+    "faceid_weight": 1.0,
+    "faceid_weight_faceidv2": 1.0,
+    "faceid_lora_strength": 0.6,
+    "provider": "CPU",
+}
+
+
+def ipadapter_for_style(name: str | None = None) -> dict:
+    """IP-Adapter 角色一致性参数（preset / 权重 / FaceID 相关）。
+
+    回退顺序：风格 entry 的 ipadapter 段（name 为空时取当前主风格）
+    → config.yaml 的 comfyui.ipadapter → 内置默认值。逐字段合并，
+    因此风格里只写要改的字段即可（如只覆盖 preset）。
+    """
+    out = dict(_IPADAPTER_DEFAULTS)
+    base = _comfyui_raw().get("ipadapter")
+    if isinstance(base, dict):
+        out.update({k: v for k, v in base.items() if v is not None})
+    entry = get_style_entry(name) or {}
+    override = entry.get("ipadapter")
+    if isinstance(override, dict):
+        out.update({k: v for k, v in override.items() if v is not None})
+    return out
+
+
+def loras_for_style(name: str | None = None) -> list[dict]:
+    """当前/指定风格要注入出图工作流的 LoRA 列表。
+
+    返回 [{name, strength_model, strength_clip}, ...]，顺序即叠加顺序。
+    name 给定→只取该风格；name 为空→合并当前所有激活风格（按名去重保序）。
+    风格未配置 loras 时返回空列表（工作流不挂 LoRA）。
+
+    注意：LoRA 基座必须与底模匹配（SD1.5 只能配 SD1.5 的 LoRA），
+    config 里只登记已验证基座匹配的条目。
+    """
+    def _normalize(entry: dict | None) -> list[dict]:
+        raw = entry.get("loras") if isinstance(entry, dict) else None
+        if not isinstance(raw, list):
+            return []
+        out: list[dict] = []
+        for item in raw:
+            if isinstance(item, str) and item.strip():
+                out.append({"name": item.strip(), "strength_model": 0.8, "strength_clip": 0.8,
+                            "trigger": ""})
+            elif isinstance(item, dict) and item.get("name"):
+                s = float(item.get("strength", 0.8))
+                out.append({
+                    "name": str(item["name"]),
+                    "strength_model": float(item.get("strength_model", s)),
+                    "strength_clip": float(item.get("strength_clip", s)),
+                    "trigger": str(item["trigger"]).strip() if item.get("trigger") else "",
+                })
+        return out
+
+    if name is not None:
+        return _normalize(get_style_entry(name))
+
+    merged: list[dict] = []
+    seen: set[str] = set()
+    for n in _active_styles:
+        for lora in _normalize(get_style_entry(n)):
+            if lora["name"] not in seen:
+                seen.add(lora["name"])
+                merged.append(lora)
+    return merged
+
+
+def lora_triggers_for_style(name: str | None = None) -> list[str]:
+    """当前/指定风格 LoRA 的触发词（去重保序）。
+
+    只追加到出图正提示词，不参与剧本/分镜的 LLM 提示词。
+    """
+    out: list[str] = []
+    for lora in loras_for_style(name):
+        for token in str(lora.get("trigger") or "").split(","):
+            tok = token.strip()
+            if tok and tok not in out:
+                out.append(tok)
+    return out
+
+
+def filter_conflicting_negative(negative: str, name: str | None = None) -> str:
+    """剔除与当前风格 LoRA 触发词冲突的负向词（去重保序）。
+
+    例：素描触发词含 sketch，而全局负向词块（anatomy_negative）也含 sketch，
+    一正一负互相抵消。规则：负向词条若作为子串出现在任一触发词中则移除。
+    只影响出图负向提示词，不参与剧本/分镜的 LLM 提示词。
+    """
+    neg = str(negative or "").strip()
+    triggers = lora_triggers_for_style(name)
+    if not neg or not triggers:
+        return neg
+    joined = ", ".join(t.lower() for t in triggers)
+    kept = [tok.strip() for tok in neg.split(",")
+            if tok.strip() and tok.strip().lower() not in joined]
+    return ", ".join(kept)
 
 
 def video_model_type_for_style(name: str | None = None, default: str | None = None) -> str | None:
@@ -198,8 +310,8 @@ _ALLOWED_UPDATE_FIELDS = {
     "llm_model", "image_ckpt", "image_model_type",
     "video_model", "video_model_type",
     "tts_engine", "voice_prompt", "subtitle_mode", "subtitle_lang",
-    "description", "advice", "recommended_models",
-    "keywords", "neg_prompt",
+    "description", "advice", "recommended_models", "loras",
+    "keywords", "neg_prompt", "ipadapter",
 }
 
 

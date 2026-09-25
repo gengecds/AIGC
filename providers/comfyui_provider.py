@@ -23,6 +23,12 @@ def _noget(url, **kw):
 
 logger = logging.getLogger(__name__)
 
+# FLUX 与 SD1.5 的采样口径完全不同：FLUX 的 cfg 必须≈1.0（沿用 SD1.5 的 7.5 会严重过曝），
+# dev 底模建议 20 步（schnell 才用 4 步）。这里给出 FLUX 的兜底默认；
+# 调用方显式传入 steps/cfg 时以调用方为准（SD1.5 口径维持原值不变）。
+FLUX_DEFAULT_STEPS = 20
+FLUX_DEFAULT_CFG = 1.0
+
 # ComfyUI 桌面版的图片输出目录（FLUX/SD 出图落盘处）。
 # 本机多套 ComfyUI 安装时可通过环境变量 COMFY_OUTPUT_DIR 覆盖。
 COMFY_OUTPUT_DIR = Path(os.environ.get(
@@ -49,17 +55,20 @@ def sync_image_to_local(img_info: dict) -> str:
         return ""
     LOCAL_IMAGE_DIR.mkdir(parents=True, exist_ok=True)
     dest = LOCAL_IMAGE_DIR / Path(fname).name
-    if dest.exists():  # 已落地过则直接复用，避免重复复制
-        return str(dest)
     # ComfyUI 可能把文件放在子目录（subfolder），拼出源文件完整路径
     subfolder = (img_info or {}).get("subfolder") or ""
     src = (COMFY_OUTPUT_DIR / subfolder / fname) if subfolder else (COMFY_OUTPUT_DIR / fname)
-    if not src.exists():
-        logger.warning(f"[comfyui] 图片源文件不存在: {src}")
-        return ""
-    shutil.copy(src, dest)
-    logger.info(f"[comfyui] 图片已落地本地: {src} -> {dest}")
-    return str(dest)
+    if src.exists():
+        # 每次都覆盖：ComfyUI 的输出序号会随重启/清空而重置，可能再次出现与旧会话
+        # 同名的文件（如 flux_output_00013_.png）。若沿用「已存在就复用」会拿到过期
+        # 旧图，导致质检（拿到旧图误判）和后续图生视频全部用错图片。
+        shutil.copy(src, dest)
+        logger.info(f"[comfyui] 图片已落地本地: {src} -> {dest}")
+        return str(dest)
+    if dest.exists():  # 源文件已不在（被清理），退回本地已缓存的文件
+        return str(dest)
+    logger.warning(f"[comfyui] 图片源文件不存在: {src}")
+    return ""
 
 
 class ComfySDImageProvider(ImageProvider):
@@ -87,12 +96,14 @@ class ComfySDImageProvider(ImageProvider):
         """按引擎类型分发到 SD1.5 或 FLUX 工作流"""
         if self._model_type == "flux":
             return ComfyUIClient.build_flux_txt2img_workflow(
+                unet_name=self._ckpt,
                 prompt=prompt,
                 width=width,
                 height=height,
                 seed=seed,
                 steps=steps,
                 cfg=cfg,
+                loras=self._style_loras(),
             )
         return ComfyUIClient.build_txt2img_workflow(
             ckpt_name=self._ckpt,
@@ -103,7 +114,95 @@ class ComfySDImageProvider(ImageProvider):
             seed=seed,
             steps=steps,
             cfg=cfg,
+            loras=self._style_loras(),
         )
+
+    def _style_loras(self) -> list:
+        """当前风格要叠加的 LoRA（SD1.5 基座；未配置则返回空列表）。"""
+        from config.style_resolver import loras_for_style
+        return loras_for_style()
+
+    def _sampling(self, steps, cfg, sd_steps: int, sd_cfg: float = 7.5):
+        """按引擎口径兜底采样参数，返回 (steps, cfg)。
+
+        FLUX 用 FLUX_DEFAULT_STEPS/FLUX_DEFAULT_CFG；SD1.5 用调用方给定的口径。
+        显式传入的 steps/cfg 永远优先（分镜里可单独覆盖）。
+        """
+        if self._model_type == "flux":
+            return (int(steps) if steps else FLUX_DEFAULT_STEPS,
+                    float(cfg) if cfg else FLUX_DEFAULT_CFG)
+        return (int(steps) if steps else sd_steps,
+                float(cfg) if cfg else sd_cfg)
+
+    # ── IP-Adapter 角色一致性（SD1.5 专属）─────────────────
+    def _ipadapter_kind(self) -> Optional[str]:
+        """当前该走哪套 IP-Adapter 模板；未启用或引擎不匹配时返回 None。
+
+        开关与模板名都来自 config.yaml 的 comfyui.ipadapter（风格可按同名段覆盖）。
+        IP-Adapter 权重是 SD1.5 基座，FLUX 引擎下直接跳过（同 ControlNet）。
+        """
+        if self._model_type == "flux":
+            return None
+        from config.style_resolver import ipadapter_for_style
+        cfg = ipadapter_for_style()
+        if not cfg.get("enabled"):
+            return None
+        kind = str(cfg.get("kind") or "ipadapter")
+        return kind if kind in ("ipadapter", "ipadapter_faceid") else "ipadapter"
+
+    def _build_ipadapter(self, kind, prompt, negative, ref_image, width, height,
+                         seed, steps, cfg, batch_size=1):
+        """构建 IP-Adapter 工作流：preset/权重统一交给 workflow_templates 从配置取。"""
+        from providers.comfyui.workflow_templates import api_workflow
+        return api_workflow(
+            kind,
+            ckpt_name=self._ckpt,
+            prompt=prompt,
+            negative_prompt=negative,
+            ref_image=ref_image,
+            width=width,
+            height=height,
+            seed=seed,
+            steps=steps,
+            cfg=cfg,
+            batch_size=batch_size,
+        )
+
+    @staticmethod
+    def _resolve_local_ref(ref: str) -> Optional[str]:
+        """把参考图解析成本机可上传的文件路径，找不到返回 None。
+
+        character_agent 存的是 ComfyUI 输出文件名（如 xxx_00001_.png），既不是
+        本机相对路径、也不在 ComfyUI 的 input/ 里；按「本机路径 → AIGC 本地图库
+        → ComfyUI output 目录」依次找，找到才能上传给工作流的 LoadImage。
+        """
+        if not ref:
+            return None
+        if os.path.isfile(ref):
+            return ref
+        name = Path(ref).name
+        for cand in (LOCAL_IMAGE_DIR / name, COMFY_OUTPUT_DIR / name):
+            if cand.is_file():
+                return str(cand)
+        return None
+
+    async def _remote_ref(self, ref: str) -> str:
+        """上传参考图到 ComfyUI input/，返回工作流可引用的名字；失败返回空串。
+
+        LoadImage 引用子目录里的图必须写成 `子目录/文件名`，只回传 basename 会
+        被 ComfyUI 判成 "Invalid image file"。
+        """
+        local = self._resolve_local_ref(ref)
+        if not local:
+            return ref  # 找不到本机实体，按「已在 ComfyUI 内的文件名」原样透传
+        try:
+            result = await self.client.upload_image(local, subfolder="refs")
+            sub = result.get("subfolder") or ""
+            name = result.get("name") or Path(local).name
+            return f"{sub}/{name}" if sub else name
+        except Exception as e:
+            logger.warning(f"[SD] 上传参考图失败 {local}: {e}")
+            return ""
 
     async def generate(
         self,
@@ -112,11 +211,38 @@ class ComfySDImageProvider(ImageProvider):
         seed: Optional[int] = None,
         **kwargs,
     ) -> list[dict]:
-        """单张图片生成，支持 ControlNet + IP-Adapter"""
+        """单张图片生成，支持 IP-Adapter + ControlNet"""
         ctrl_type = kwargs.get("controlnet_type") or kwargs.get("ctrl_type") or None
         ctrl_image = kwargs.get("controlnet_image") or ref_image or None
+        # ControlNet 工作流基于 SD1.5（CheckpointLoader + SD1.5 controlnet），
+        # FLUX 走 GGUF UNET，接不上；FLUX 下忽略 ControlNet 走纯文生图。
+        if self._model_type == "flux":
+            ctrl_type = ctrl_image = None
+        steps, cfg = self._sampling(kwargs.get("steps"), kwargs.get("cfg"), sd_steps=12)
 
-        if ctrl_type and ctrl_image:
+        # 优先级：IP-Adapter > ControlNet > 文生图。两者都是独立工作流（各自带
+        # CheckpointLoader），当前 builder 无法叠加，故 IP-Adapter 启用时让位。
+        wf = None
+        ref = kwargs.get("ipadapter_ref") or ref_image or ctrl_image
+        ip_kind = self._ipadapter_kind() if ref else None
+        if ip_kind:
+            remote_ref = await self._remote_ref(ref)
+            if remote_ref:
+                wf = self._build_ipadapter(
+                    kind=ip_kind,
+                    prompt=prompt,
+                    negative=kwargs.get("negative_prompt", ""),
+                    ref_image=remote_ref,
+                    width=kwargs.get("width", 512),
+                    height=kwargs.get("height", 512),
+                    seed=seed or 42,
+                    steps=steps,
+                    cfg=cfg,
+                )
+            else:
+                logger.warning("[SD] IP-Adapter 参考图不可用，回退到 ControlNet/文生图")
+
+        if wf is None and ctrl_type and ctrl_image:
             wf = ComfyUIClient.build_controlnet_workflow(
                 ckpt_name=self._ckpt,
                 prompt=prompt,
@@ -126,19 +252,19 @@ class ComfySDImageProvider(ImageProvider):
                 width=kwargs.get("width", 512),
                 height=kwargs.get("height", 512),
                 seed=seed or 42,
-                steps=kwargs.get("steps", 12),
-                cfg=kwargs.get("cfg", 7.5),
+                steps=steps,
+                cfg=cfg,
                 controlnet_strength=kwargs.get("controlnet_strength", 0.75),
             )
-        else:
+        if wf is None:
             wf = self._build_txt2img(
                 prompt=prompt,
                 negative=kwargs.get("negative_prompt", ""),
                 width=kwargs.get("width", 512),
                 height=kwargs.get("height", 512),
                 seed=seed or 42,
-                steps=kwargs.get("steps", 12),
-                cfg=kwargs.get("cfg", 7.5),
+                steps=steps,
+                cfg=cfg,
             )
         resp = await self.client.queue_prompt(wf)
         prompt_id = resp["prompt_id"]
@@ -162,21 +288,27 @@ class ComfySDImageProvider(ImageProvider):
         import asyncio, time
         import requests
 
-        # 1. 先去重并上传 ref_image 到 ComfyUI input/
-        uploaded_refs = {}  # local_path -> filename_in_comfyui
+        # 1. 先去重并上传参考图到 ComfyUI input/
+        # 参考图来源有两类：IP-Adapter 的 ipadapter_ref、ControlNet 的 controlnet_image/ref_image；
+        # 值可能是本机路径，也可能是 ComfyUI 输出文件名，统一交给 _remote_ref 解析+上传。
+        uploaded_refs = {}  # 原样 ref -> filename_in_comfyui
         for shot in shots:
-            ctrl_image = shot.get("controlnet_image") or shot.get("ref_image") or None
-            if ctrl_image and ctrl_image not in uploaded_refs:
-                try:
-                    result = await self.client.upload_image(ctrl_image, subfolder="refs")
-                    remote_name = result.get("name", os.path.basename(ctrl_image))
-                    uploaded_refs[ctrl_image] = remote_name
-                    logger.info(f"[SD] 上传参考图: {ctrl_image} -> {remote_name}")
-                except Exception as e:
-                    logger.warning(f"[SD] 上传参考图失败 {ctrl_image}: {e}")
-                    # 上传失败就跳过 ControlNet
-                    shot["controlnet_type"] = None
-                    shot["ref_image"] = None
+            ref = shot.get("ipadapter_ref") or shot.get("controlnet_image") or shot.get("ref_image") or None
+            if not ref or ref in uploaded_refs:
+                continue
+            remote_name = await self._remote_ref(ref)
+            if not remote_name:
+                logger.warning(f"[SD] 上传参考图失败 {ref}，该镜头跳过 IP-Adapter/ControlNet")
+                shot["ipadapter_ref"] = None
+                shot["controlnet_type"] = None
+                shot["ref_image"] = None
+                continue
+            uploaded_refs[ref] = remote_name
+            # 同一个文件可能被不同键引用（ipadapter_ref / controlnet_image / ref_image），都登记一份
+            for key in ("ipadapter_ref", "controlnet_image", "ref_image"):
+                if shot.get(key):
+                    uploaded_refs[shot[key]] = remote_name
+            logger.info(f"[SD] 上传参考图: {ref} -> {remote_name}")
 
         # 2. 全部提交，不等待
         submitted = []
@@ -186,8 +318,34 @@ class ComfySDImageProvider(ImageProvider):
 
             ctrl_type = shot.get("controlnet_type") or None
             ctrl_image = shot.get("controlnet_image") or shot.get("ref_image") or None
+            # 同 generate()：FLUX 接不上 SD1.5 的 ControlNet / IP-Adapter 工作流，忽略之。
+            if self._model_type == "flux":
+                ctrl_type = ctrl_image = None
+            steps, cfg = self._sampling(shot.get("steps"), shot.get("cfg"), sd_steps=16)
 
-            if ctrl_type and ctrl_image:
+            # 优先级：IP-Adapter > ControlNet > 文生图（同 generate()）
+            wf = None
+            ip_kind = self._ipadapter_kind()
+            ref = shot.get("ipadapter_ref") or ctrl_image
+            if ip_kind and ref:
+                # 预上传段已传过就直接复用远端名，否则现传
+                remote_ref = uploaded_refs.get(ref) or await self._remote_ref(ref)
+                if remote_ref:
+                    wf = self._build_ipadapter(
+                        kind=ip_kind,
+                        prompt=prompt,
+                        negative=shot.get("negative_prompt", ""),
+                        ref_image=remote_ref,
+                        width=int(shot.get("width", 768)),
+                        height=int(shot.get("height", 768)),
+                        seed=seed,
+                        steps=steps,
+                        cfg=cfg,
+                    )
+                else:
+                    logger.warning("[SD] IP-Adapter 参考图不可用，回退到 ControlNet/文生图")
+
+            if wf is None and ctrl_type and ctrl_image:
                 remote_name = uploaded_refs.get(ctrl_image, os.path.basename(ctrl_image))
                 wf = ComfyUIClient.build_controlnet_workflow(
                     ckpt_name=self._ckpt,
@@ -198,19 +356,19 @@ class ComfySDImageProvider(ImageProvider):
                     width=int(shot.get("width", 768)),
                     height=int(shot.get("height", 768)),
                     seed=seed,
-                    steps=int(shot.get("steps", 16)),
-                    cfg=float(shot.get("cfg", 7.5)),
+                    steps=steps,
+                    cfg=cfg,
                     controlnet_strength=float(shot.get("controlnet_strength", 0.8)),
                 )
-            else:
+            if wf is None:
                 wf = self._build_txt2img(
                     prompt=prompt,
                     negative=shot.get("negative_prompt", ""),
                     width=int(shot.get("width", 768)),
                     height=int(shot.get("height", 768)),
                     seed=seed,
-                    steps=int(shot.get("steps", 16)),
-                    cfg=float(shot.get("cfg", 7.5)),
+                    steps=steps,
+                    cfg=cfg,
                 )
             resp = await self.client.queue_prompt(wf)
             submitted.append({

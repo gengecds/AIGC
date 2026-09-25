@@ -44,6 +44,15 @@ class SubtitleAgent(Agent):
             logger.warning(f"[SubtitleAgent] 翻译失败，使用原文: {e}")
             return text
 
+    @staticmethod
+    def _fmt_time(seconds: float) -> str:
+        """秒 → 'HH:MM:SS,mmm'（毫秒精度，镜头时长为浮点秒数）"""
+        ms_total = int(round(max(0.0, float(seconds)) * 1000))
+        h, rem = divmod(ms_total, 3600_000)
+        m, rem = divmod(rem, 60_000)
+        s, ms = divmod(rem, 1000)
+        return f"{h:02d}:{m:02d}:{s:02d},{ms:03d}"
+
     async def run(self, script: dict, storyboard: dict,
                   output_dir: str = "storage/output") -> AgentResult:
         logger.info("[SubtitleAgent] 生成字幕")
@@ -59,7 +68,6 @@ class SubtitleAgent(Agent):
             pass
 
         episodes = storyboard.get("data", {}).get("episodes", []) or storyboard.get("episodes", [])
-        script_episodes = script.get("episodes", [])
         all_srt = []
 
         # llm 模式：整本国字幕待翻译对白一次性收集，再逐句翻译
@@ -70,10 +78,10 @@ class SubtitleAgent(Agent):
             ep_num = ep.get("episode_number", 1)
             shots = ep.get("shots", [])
             srt_lines = []
-            time_cursor = 0  # 秒
+            time_cursor = 0.0  # 秒（浮点：镜头时长 = 该句配音真实时长 + 停顿，不再是整数秒）
 
             for shot in shots:
-                dur = shot.get("duration", 5)
+                dur = float(shot.get("duration") or 5)
                 dialogue = shot.get("dialogue", "")
 
                 if dialogue:
@@ -82,18 +90,13 @@ class SubtitleAgent(Agent):
                             translate_cache[dialogue] = await self._translate(dialogue, lang)
                         dialogue = translate_cache[dialogue]
 
+                    # 一句一镜：字幕从镜头起点铺满整镜（含句尾停顿），与画面/配音精确对位
                     start_s = time_cursor
                     end_s = time_cursor + dur
 
-                    def fmt_time(seconds: int) -> str:
-                        h = seconds // 3600
-                        m = (seconds % 3600) // 60
-                        s = seconds % 60
-                        return f"{h:02d}:{m:02d}:{s:02d},000"
-
                     srt_lines.append(f"{len(srt_lines) + 1}")
                     srt_lines.append(
-                        f"{fmt_time(start_s)} --> {fmt_time(end_s)}"
+                        f"{self._fmt_time(start_s)} --> {self._fmt_time(end_s)}"
                     )
                     srt_lines.append(dialogue)
                     srt_lines.append("")

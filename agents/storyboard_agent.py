@@ -7,12 +7,18 @@ import json
 import logging
 import os
 from datetime import datetime
+from typing import Union
 
 from agents.base import Agent, AgentResult
 from providers.base import LLMProvider
 from providers.llm import OllamaProvider, get_llm_provider
 
 logger = logging.getLogger(__name__)
+
+# 镜头时长合法区间：新方案下「每句台词一镜」，镜头时长 = 该句配音时长 + 停顿，
+# 短句可能只有 1s 左右、长句可能到 12s+，因此下限放宽到 0.8s、上限放宽到 20s。
+MIN_SHOT_DURATION = 0.8
+MAX_SHOT_DURATION = 20.0
 
 VALID_SHOT_TYPES = {"远", "中", "近", "特写", "俯拍", "仰拍", "航拍", "跟随", "全景", "远景", "中景", "近景", "广角", "大特写"}
 
@@ -57,7 +63,7 @@ STORYBOARD_SYSTEM_PROMPT = """你是一个专业的AI漫剧分镜师。请根据
 2. duration 3-8秒：对白/情绪场景6-8秒，动作/转场场景3-4秒
 3. sd_prompt 必须覆盖6层：①主体 ②动作 ③场景 ④风格 ⑤光影镜头 ⑥画质词；且主体要带外观（年龄/发型/服饰）让角色可辨识
 4. sd_negative 必须含："bad anatomy, extra hands, deformed face, missing fingers, ugly, low quality, blurry, watermark"
-5. 一集6-10个分镜，不超过10个
+5. 一集6-10个分镜，不超过10个；⚠️若用户明确指定了分镜数量与顺序（如要求"一镜一句"），一律以用户要求为准
 6. **镜头节奏**：每3-5个分镜换一次景别，避免连续3个同景别；开场远/全景建空间，对话中/近景，情绪转折特写
 7. **剧情连贯**：相邻分镜动作/位置逻辑连续（A进屋→走到桌前→坐下说话），不跳场景、不自创剧情
 8. **同场景背景一致**：同一间屋子 background 描述前后保持一致，不许变
@@ -149,7 +155,9 @@ class ShotValidator:
                 shot["shot_type"] = "中"  # 默认回退
             # 确保 duration 合法
             dur = shot.get("duration", 0)
-            if not isinstance(dur, (int, float)) or dur < 3 or dur > 12:
+            if not isinstance(dur, (int, float)) or not (
+                MIN_SHOT_DURATION <= dur <= MAX_SHOT_DURATION
+            ):
                 shot["duration"] = 5
             # 确保 sd_prompt 存在
             prompt = shot.get("sd_prompt", "")
@@ -176,7 +184,9 @@ class ShotValidator:
                     "message": f"无效镜头类型: {st}，已自动修正",
                 })
             dur = shot.get("duration", 0)
-            if not isinstance(dur, (int, float)) or dur < 3 or dur > 12:
+            if not isinstance(dur, (int, float)) or not (
+                MIN_SHOT_DURATION <= dur <= MAX_SHOT_DURATION
+            ):
                 warnings.append({
                     "shot_id": shot_id,
                     "field": "duration",
@@ -221,7 +231,13 @@ class StoryboardAgent(Agent):
             self.llm = get_llm_provider(llm_provider, default_model=default_model)
         self.validator = ShotValidator()
 
-    async def run(self, script: dict) -> AgentResult:
+    async def run(self, script: dict, voice_plan: list | None = None) -> AgentResult:
+        """生成分镜。
+
+        voice_plan 为 AudioAgent.plan_voices() 的「逐句配音时长表」；传入时按
+        「每句台词一镜」生成——镜头时长 = 该句配音真实时长 + 停顿，台词与说话人以
+        剧本 dialogues 为准，画面字段沿用 LLM 对应序位的产出。不传则维持原有行为。
+        """
         logger.info("[StoryboardAgent] 开始拆分镜")
 
         if not script or "episodes" not in script:
@@ -229,6 +245,13 @@ class StoryboardAgent(Agent):
                 success=False,
                 error="剧本数据不完整，缺少 episodes 字段",
             )
+
+        # 配音预测量按集分组：key 用字符串，兼容 int/str 两种 episode_number
+        plan_by_ep: dict[str, list[dict]] = {}
+        for p in (voice_plan or []):
+            if not isinstance(p, dict) or not p.get("text"):
+                continue
+            plan_by_ep.setdefault(str(p.get("episode_number") or 1), []).append(p)
 
         all_episodes = []
 
@@ -239,12 +262,19 @@ class StoryboardAgent(Agent):
                 ensure_ascii=False,
                 indent=2,
             )
+            plan_ep = plan_by_ep.get(str(ep.get("episode_number") or 1), [])
 
             prompt = (
                 f"剧本：{ep_input}\n\n"
                 f"角色列表：{characters_info}\n"
                 f"请为本集生成分镜，要求合法的JSON数组。"
             )
+            if plan_ep:
+                prompt += (
+                    f"\n\n本集共 {len(plan_ep)} 句台词，请生成 {len(plan_ep)} 个分镜："
+                    f"一镜一句，数量与顺序严格对应剧本 dialogues 数组；"
+                    f"每个分镜的 dialogue 只写这一句台词，characters 只写该句说话人。"
+                )
             # 注入当前所选风格的量化关键词（config 的 styles.<风格>.keywords），
             # 让每个分镜的画面描述/光影贴合所选风格。
             from config.style_resolver import style_keywords, style_label
@@ -264,12 +294,20 @@ class StoryboardAgent(Agent):
                     f"记住：好戏来自『克制』，一个细小动作往往胜过一整句'他很伤心'。"
                 )
 
+            # 输出预算：每句台词一镜时，一集可能有十几~几十个分镜、每个分镜十余个字段；
+            # 且 deepseek 推理模型会先消耗 reasoning token，默认 8192 常常在正文写完前
+            # 就耗尽（表现为 finish_reason=length、正文为空或半截 JSON，被判成「空字符串」）。
+            expected_shots = len(plan_ep) if plan_ep else 10
+            budget = min(32768, max(8192, expected_shots * 1024))
+
             raw = await self.llm.generate(
                 prompt=prompt,
                 system_prompt=STORYBOARD_SYSTEM_PROMPT,
                 # 不指定 model，让各 Provider 用自己的默认模型
                 # json_mode=True 强制 Ollama 输出合法 JSON 数组
                 json_mode=True,
+                max_tokens=budget,   # DeepSeek/OpenAI 兼容：输出上限
+                num_predict=budget,  # Ollama 本地模型：对应 num_predict
             )
 
             raw = raw.strip()
@@ -304,9 +342,38 @@ class StoryboardAgent(Agent):
                             flat_shots.append(sub)
             shots = flat_shots
 
-            # 分镜数量限制：默认最多18个，可用 STORYBOARD_MAX_SHOTS 环境变量
-            # 调小（如=4）用于快速验证管线，正式使用不设置即可
-            max_shots = int(os.environ.get("STORYBOARD_MAX_SHOTS", "18"))
+            if plan_ep:
+                # 每句台词一镜：镜头时长 = 配音预测量给出的 slot（= 该句配音时长 + 停顿），
+                # 台词/说话人以剧本 dialogues 为准（LLM 只负责画面），确保逐句顺序落位不重叠。
+                dialogues = [d for d in (ep.get("dialogues") or []) if isinstance(d, dict)]
+                aligned = []
+                for i, p in enumerate(plan_ep):
+                    dlg = dialogues[i] if i < len(dialogues) else {}
+                    shot = dict(shots[i]) if i < len(shots) else {}
+                    shot["shot_id"] = i + 1
+                    shot["duration"] = float(p.get("slot") or 0) or 5
+                    raw_line = dlg.get("line") or dlg.get("text") or p.get("text") or ""
+                    shot["dialogue"] = (
+                        raw_line.strip().strip('"').strip("“”").strip()
+                        if isinstance(raw_line, str) else ""
+                    )
+                    speaker = str(dlg.get("character") or p.get("character") or "").strip()
+                    if speaker:
+                        shot["characters"] = [speaker]
+                    if not str(shot.get("scene") or "").strip() and dlg.get("scene"):
+                        shot["scene"] = str(dlg.get("scene")).strip()
+                    aligned.append(shot)
+                if aligned:
+                    shots = aligned
+                    logger.info(
+                        f"[Storyboard] 每句台词一镜：本集 {len(shots)} 个分镜"
+                        f"（时长由配音预测量决定，合计 "
+                        f"{sum(s['duration'] for s in shots):.1f}s）"
+                    )
+
+            # 分镜数量限制：默认最多40个（每句台词一镜时约等于台词条数），可用
+            # STORYBOARD_MAX_SHOTS 环境变量调小（如=4）用于快速验证管线
+            max_shots = int(os.environ.get("STORYBOARD_MAX_SHOTS", "40"))
             if len(shots) > max_shots:
                 logger.info(
                     f"[Storyboard] 分镜数 {len(shots)} 超过限制 {max_shots}，已截断"

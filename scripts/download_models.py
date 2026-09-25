@@ -75,16 +75,18 @@ MODEL_SOURCES: Dict[str, Tuple[str, str, str]] = {
     "v1-5-pruned-emaonly.safetensors": ("stable-diffusion-v1-5/stable-diffusion-v1-5", "v1-5-pruned-emaonly.safetensors", "checkpoints"),
     # 写实 —— Realistic Vision
     "Realistic-Vision-V5.1.safetensors": ("SG161222/Realistic_Vision_V5.1_noVAE", "Realistic_Vision_V5.1.safetensors", "checkpoints"),
-    # 日漫 / Q版 —— Anything V5
-    "Anything V5.safetensors": ("Lykon/Anything-V5", "Anything-V5.safetensors", "checkpoints"),
+    # 日漫 / Q版 —— Anything V5（原 Lykon/Anything-V5 已 401/下架，改用官方 ckpt 镜像）
+    "Anything V5.safetensors": ("ckpt/anything-v5.0", "AnythingV5V3_v5PrtRE.safetensors", "checkpoints"),
     # 日漫 —— Counterfeit V3.0
     "Counterfeit-V3.0.safetensors": ("gsdf/Counterfeit-V3.0", "Counterfeit-V3.0.safetensors", "checkpoints"),
+    # FLUX.1-dev 的 GGUF（本地 24GB 统一内存跑不动的 fp16 旗舰 → 用 Q5_K_S 量化版）
+    "flux1-dev-Q5_K_S.gguf": ("city96/FLUX.1-dev-gguf", "flux1-dev-Q5_K_S.gguf", "diffusion_models"),
     # FLUX.1-schnell 的 GGUF（本地已有，仅注册来源）
     "FLUX.1-schnell-Q5_K_S.gguf": ("city96/FLUX.1-schnell-gguf", "flux1-schnell-Q5_K_S.gguf", "diffusion_models"),
     # 文本编码器 / VAE（FLUX 组件）
     "clip_l.safetensors": ("comfyanonymous/flux_text_encoders", "clip_l.safetensors", "text_encoders"),
     "t5xxl_fp8_e4m3fn.safetensors": ("comfyanonymous/flux_text_encoders", "t5xxl_fp8_e4m3fn.safetensors", "text_encoders"),
-    "ae.safetensors": ("black-forest-labs/FLUX.1-schnell", "ae.safetensors", "vae"),
+    "ae.safetensors": ("foxmail/flux_vae", "ae.safetensors", "vae"),
 }
 
 # ─── 仅注册为「已有别名」的名字（本地不同名但可软链，无需下载源）─────

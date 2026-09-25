@@ -120,10 +120,18 @@ class LTXMLXVideoProvider(VideoProvider):
             *cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
             env=self._ENV,
         )
-        # 边跑边打日志，方便看进度/排查
-        async for line in proc.stdout:
-            logger.info(f"[LTXMLX] {line.decode(errors='ignore').rstrip()}")
-        await proc.wait()
+        try:
+            # 边跑边打日志，方便看进度/排查
+            async for line in proc.stdout:
+                logger.info(f"[LTXMLX] {line.decode(errors='ignore').rstrip()}")
+            await proc.wait()
+        finally:
+            # 管线被取消（CancelledError）时上层不再等本进程，必须在此兜底杀掉，
+            # 否则 ltx-2-mlx 变孤儿进程继续吃内存并往 output 目录写文件。
+            if proc.returncode is None:
+                logger.warning(f"[LTXMLX] 终止子进程 pid={proc.pid} shot={shot_id}")
+                proc.kill()
+                await proc.wait()
         if proc.returncode != 0 or not out.exists():
             raise RuntimeError(f"LTXMLX 生成失败 shot={shot_id} rc={proc.returncode}")
         return str(out)

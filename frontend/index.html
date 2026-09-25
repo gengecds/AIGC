@@ -6,6 +6,58 @@
 <title>AI 漫剧工坊 · 创作控制台</title>
 <link rel="icon" href="public/favicon.svg">
 <link rel="stylesheet" href="style.css">
+<style id="wfStyles">
+  /* 工作流模板抽屉（独立轻量 UI，避免和主控制台样式互相干扰） */
+  #wfOverlay{position:fixed;inset:0;background:rgba(0,0,0,.4);z-index:990;display:none}
+  #wfDrawer{position:fixed;top:0;right:0;height:100%;width:520px;max-width:94vw;background:#fbfbfd;
+    box-shadow:-8px 0 30px rgba(0,0,0,.16);z-index:991;transform:translateX(105%);transition:transform .22s ease;
+    display:flex;flex-direction:column;font-family:-apple-system,"PingFang SC","Microsoft YaHei",sans-serif}
+  #wfDrawer.open{transform:none}
+  #wfDrawer .wf-head{padding:16px 20px;border-bottom:1px solid #ececf1;display:flex;justify-content:space-between;align-items:center}
+  #wfDrawer .wf-head h3{margin:0;font-size:16px;color:#1f2430}
+  #wfDrawer .wf-body{padding:8px 20px 24px;overflow:auto;flex:1}
+  .wf-tip{margin:8px 0 4px;font-size:12.5px;color:#7a7f8c;line-height:1.6}
+  .wf-card{border:1px solid #e6e6ee;border-radius:12px;background:#fff;padding:14px 16px;margin:12px 0}
+  .wf-card h4{margin:0 0 4px;font-size:14px;color:#1f2430}
+  .wf-card p{margin:0 0 10px;font-size:12.5px;color:#6b7180;line-height:1.5}
+  .wf-actions{display:flex;gap:8px;flex-wrap:wrap}
+  .wf-btn{border:1px solid #d9d9e6;background:#fff;color:#3b3f4d;border-radius:8px;padding:6px 12px;
+    font-size:12.5px;cursor:pointer}
+  .wf-btn:hover{border-color:#4f46e5;color:#4f46e5}
+  .wf-btn.dl{background:#4f46e5;border-color:#4f46e5;color:#fff}
+  .wf-btn.dl:hover{opacity:.9;color:#fff}
+  .wf-x{border:none;background:transparent;font-size:18px;color:#8a8f9c;cursor:pointer;line-height:1}
+  .wf-load{color:#8a8f9c;font-size:13px;padding:20px 0;text-align:center}
+  /* ═══ 情报站内嵌层（覆盖主内容区的 Vue 情报看板 / 管线向导）═══
+     与原生工作台统一为深色 Cinema Control Room 视觉 */
+  #intel-app{position:fixed;inset:0;z-index:900;overflow:auto;display:none;
+    font-family:var(--font-body);color:var(--text-0);font-size:14px;line-height:1.6;
+    background:
+      radial-gradient(1200px 500px at 50% -10%, rgba(217,169,78,0.06), transparent 60%),
+      repeating-linear-gradient(0deg, rgba(255,255,255,0.012) 0 1px, transparent 1px 3px),
+      var(--bg-0);}
+  #intel-app::-webkit-scrollbar{width:9px;height:9px}
+  #intel-app::-webkit-scrollbar-track{background:transparent}
+  #intel-app::-webkit-scrollbar-thumb{background:var(--bg-3);border-radius:999px;border:2px solid var(--bg-1)}
+  #intel-app::-webkit-scrollbar-thumb:hover{background:#2a313d}
+  #intel-app,.intel-embed,.intel-embed *{box-sizing:border-box}
+  .intel-embed{display:flex;flex-direction:column;min-height:100%}
+  .intel-toolbar{position:sticky;top:0;z-index:10;display:flex;align-items:center;gap:16px;
+    padding:12px 20px;background:rgba(16,19,25,0.85);backdrop-filter:blur(8px);
+    border-bottom:1px solid var(--line)}
+  .intel-back{border:1px solid var(--line-strong);background:var(--bg-3);color:var(--text-0);
+    border-radius:8px;padding:8px 16px;font-size:13px;font-family:var(--font-body);
+    cursor:pointer;letter-spacing:1px;transition:all .18s ease}
+  .intel-back:hover{border-color:var(--gold);color:var(--gold-bright)}
+  .intel-tabs{display:flex;gap:6px}
+  .intel-tab{text-decoration:none;color:var(--text-2);font-size:13px;padding:8px 16px;
+    border-radius:8px;letter-spacing:1px;border:1px solid transparent;transition:all .15s ease}
+  .intel-tab:hover{color:var(--text-1)}
+  .intel-tab.router-link-active{background:var(--gold-dim);color:var(--gold-bright);
+    border-color:rgba(217,169,78,0.25);font-weight:600}
+  /* 抵消原生 style.css 的 .main 规则在情报视图内的副作用 */
+  #intel-app .main{padding:0;max-width:none;overflow:visible}
+</style>
 </head>
 <body>
 
@@ -23,6 +75,8 @@
     <button class="btn btn-ghost" id="modelLibBtn">模型库</button>
     <button class="btn btn-ghost" id="skillsBtn">技能库</button>
     <button class="btn btn-ghost" id="historyBtn">历史任务</button>
+    <button class="btn btn-ghost" id="wfBtn">工作流</button>
+    <button class="btn btn-ghost" id="intelBtn">情报站</button>
     <div class="user-area" id="userArea" style="display:none">
       <span class="user-name" id="userName">—</span>
       <button class="btn btn-ghost btn-sm" id="logoutBtn">退出</button>
@@ -217,6 +271,19 @@
   </div>
 </div>
 
+<!-- ═══ 工作流模板抽屉 ═══ -->
+<div id="wfOverlay"></div>
+<div id="wfDrawer">
+  <div class="wf-head">
+    <h3>生图工作流模板</h3>
+    <button class="wf-x" id="wfClose" title="关闭">✕</button>
+  </div>
+  <div class="wf-body" id="wfBody">
+    <p class="wf-tip">💡 用法：点「下载画布 JSON」，把文件<strong>拖进 ComfyUI 画布</strong>（或 Workflow → Open），即可看到节点图、改提示词/模型/尺寸，改完 <strong>Ctrl+S</strong> 存成你自己的模板。</p>
+    <div id="wfList"><div class="wf-load">加载中…</div></div>
+  </div>
+</div>
+
 <!-- ═══ 登录覆盖层 ═══ -->
 <div class="login-overlay" id="loginOverlay">
   <div class="login-card">
@@ -241,6 +308,125 @@
   </div>
 </div>
 
-<script src="app.js"></script>
+<!-- ═══ 情报站内嵌容器（Vue 情报看板 + 管线向导）═══ -->
+<div id="intel-app" style="display:none"></div>
+
+<script type="module">
+// ═══ 单一前端页面 ═══
+// 以「原生创作控制台」为主页，顶栏「情报站」按钮在主内容区覆盖挂载 Vue 情报看板/管线向导。
+// 内嵌层自带「返回创作控制台」按钮（对应 window.__closeIntel），关闭后恢复原生界面。
+loadScript('app.js');
+initWorkflow();
+
+// ── 情报站内嵌开关 ──
+var intelBtn = document.getElementById('intelBtn');
+var intelApp = document.getElementById('intel-app');
+var intelLoaded = false;
+var intelOpen = false;
+
+function openIntel() {
+  intelOpen = true;
+  intelApp.style.display = 'block';
+  if (intelBtn) intelBtn.textContent = '退出情报站';
+  if (intelLoaded) {
+    window.__mountIntel();
+  } else {
+    intelLoaded = true;
+    import('/src/embed-entry.js').then(function () {
+      window.__mountIntel();
+    });
+  }
+}
+
+function closeIntel() {
+  intelOpen = false;
+  intelApp.style.display = 'none';
+  if (intelBtn) intelBtn.textContent = '情报站';
+  if (window.__unmountIntel) window.__unmountIntel();
+  // 还原到主页路径，避免刷新时落在 /intelligence 或 /pipeline
+  if (window.location.pathname !== '/') history.replaceState(null, '', '/');
+}
+window.__closeIntel = closeIntel;
+if (intelBtn) intelBtn.onclick = function () { intelOpen ? closeIntel() : openIntel(); };
+
+// 直接访问 /intelligence 或 /pipeline 时，自动打开情报站内嵌（保持会话连贯）
+if (['/intelligence', '/pipeline'].indexOf(window.location.pathname) !== -1) openIntel();
+
+function loadScript(src) {
+  const s = document.createElement('script');
+  s.src = src;
+  document.head.appendChild(s);
+}
+
+// ═══ 工作流模板抽屉（原生轻量模块，仅非情报路径使用）═══
+function initWorkflow() {
+  var API = 'http://localhost:8888';
+  var overlay = document.getElementById('wfOverlay');
+  var drawer = document.getElementById('wfDrawer');
+  var list = document.getElementById('wfList');
+  var open = false;
+
+  function show() {
+    open = true;
+    overlay.style.display = 'block';
+    drawer.classList.add('open');
+    loadList();
+  }
+  function hide() {
+    open = false;
+    overlay.style.display = 'none';
+    drawer.classList.remove('open');
+  }
+  function dl(kind, label, fmt) {
+    // 生成 <a> 触发浏览器下载；fmt='api' 下载后端执行格式，默认画布(UI)格式
+    var url = API + '/api/v1/comfyui/workflows/' + encodeURIComponent(kind) +
+      '?download=1' + (fmt === 'api' ? '&format=api' : '');
+    var a = document.createElement('a');
+    a.href = url;
+    a.download = label + '.json';
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+  }
+  function card(w) {
+    var el = document.createElement('div');
+    el.className = 'wf-card';
+    var h = document.createElement('h4');
+    h.textContent = w.label;
+    var p = document.createElement('p');
+    p.textContent = w.desc;
+    var row = document.createElement('div');
+    row.className = 'wf-actions';
+    var b1 = document.createElement('button');
+    b1.className = 'wf-btn dl';
+    b1.textContent = '下载画布 JSON';
+    b1.onclick = function () { dl(w.kind, w.filename.replace('.json', '_ui')); };
+    var b2 = document.createElement('button');
+    b2.className = 'wf-btn';
+    b2.textContent = '下载 API JSON';
+    b2.onclick = function () { dl(w.kind, w.filename, 'api'); };
+    row.appendChild(b1); row.appendChild(b2);
+    el.appendChild(h); el.appendChild(p); el.appendChild(row);
+    return el;
+  }
+  function loadList() {
+    list.innerHTML = '<div class="wf-load">加载中…</div>';
+    fetch(API + '/api/v1/comfyui/workflows')
+      .then(function (r) { return r.json(); })
+      .then(function (j) {
+        list.innerHTML = '';
+        (j.workflows || []).forEach(function (w) { list.appendChild(card(w)); });
+        if (!(j.workflows || []).length) list.innerHTML = '<div class="wf-load">暂无模板（请先启动后端）</div>';
+      })
+      .catch(function () {
+        list.innerHTML = '<div class="wf-load">加载失败，请确认后端 :8888 已启动</div>';
+      });
+  }
+
+  document.getElementById('wfBtn').onclick = show;
+  document.getElementById('wfClose').onclick = hide;
+  overlay.onclick = hide;
+}
+</script>
 </body>
 </html>

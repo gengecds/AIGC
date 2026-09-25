@@ -6,6 +6,7 @@
 from __future__ import annotations
 
 import logging
+import subprocess
 from pathlib import Path
 
 from fastapi import APIRouter, Depends, File, Form, HTTPException, UploadFile
@@ -60,6 +61,20 @@ def _guess_ext(filename: str, content_type: str) -> str:
     return (Path(filename).suffix.lower()) if filename else ".bin"
 
 
+def _probe_audio_duration(path: str) -> float:
+    """用 ffprobe 读音频时长（秒）；读不到返回 0.0（不阻塞上传）。"""
+    try:
+        r = subprocess.run(
+            ["ffprobe", "-v", "quiet",
+             "-show_entries", "format=duration", "-of", "csv=p=0", str(path)],
+            capture_output=True, text=True, timeout=15,
+        )
+        v = float((r.stdout or "").strip().splitlines()[0])
+        return round(v, 3) if v > 0 else 0.0
+    except Exception:
+        return 0.0
+
+
 @router.post("/upload_reference")
 async def upload_reference_audio(
     file: UploadFile = File(..., description="角色参考音频（建议 <30s）"),
@@ -77,7 +92,7 @@ async def upload_reference_audio(
           "ref_id": "ref_xxxxxxxx_171xxxxxxxxx",
           "character": "清洗后的安全角色名",
           "ref_path": "磁盘绝对路径",
-          "duration_seconds": 0.0   # 后续用 ffprobe/mutagen 补
+          "duration_seconds": 12.345   # ffprobe 实测时长（读不到为 0.0）
         }
     """
     # ── 1. 类型校验（content-type + 扩展名双保险）
@@ -134,5 +149,5 @@ async def upload_reference_audio(
         "ref_id": ref_id,
         "character": safe_char,
         "ref_path": abs_path,
-        "duration_seconds": 0.0,  # TODO: 后续接 mutagen / ffprobe 算时长
+        "duration_seconds": _probe_audio_duration(abs_path),
     }

@@ -8,11 +8,25 @@ engine:
   llm_model_storyboard: deepseek-v4-pro
 comfyui:
   server_addr: 127.0.0.1
-  server_port: 8189
-  ckpt_name: v1-5-pruned-emaonly.safetensors
+  server_port: 8188
+  ckpt_name: flux1-dev-Q5_K_S.gguf
   model_type: flux
   use_https: false
   timeout: 1800
+  # IP-Adapter 角色一致性参数（底模 SD1.5）。preset 必须是 ComfyUI 里
+  # IPAdapterUnifiedLoader / IPAdapterUnifiedLoaderFaceID 暴露的预设名。
+  # 单个风格可写 styles.<风格名>.ipadapter 段，按同名字段局部覆盖。
+  ipadapter:
+    enabled: true                     # 自动出图链路启用 IP-Adapter（仅 SD1.5 引擎生效，FLUX 自动跳过）
+    kind: ipadapter_faceid            # 走哪套模板：ipadapter | ipadapter_faceid
+    # preset 须写 ComfyUI 里的全名，简称会 400（候选见下方注释）
+    preset: PLUS (high strength)      # ipadapter: LIGHT - SD1.5 only (low strength) | STANDARD (medium strength) | VIT-G (medium strength) | PLUS (high strength) | PLUS FACE (portraits) | FULL FACE - SD1.5 only (portraits stronger)
+    weight: 0.7                       # 参考图整体影响强度
+    faceid_preset: FACEID PLUS V2     # ipadapter_faceid: FACEID | FACEID PLUS - SD1.5 only | FACEID PLUS V2 | FACEID PORTRAIT (style transfer) | FACEID PORTRAIT UNNORM - SDXL only (strong)
+    faceid_weight: 1.0                # FaceID 人脸强度
+    faceid_weight_faceidv2: 1.0       # FACEID PLUS V2 专用强度，仅 faceid_preset 为该档时生效
+    faceid_lora_strength: 0.6         # FaceID 配套 LoRA 强度，0 = 不加载
+    provider: CPU                     # insightface 推理后端：CPU | CUDA | ROCM | DirectML | OpenVINO | CoreML
 tts:
   engine: voxcpm
   voice_prompt: 温柔甜美年轻女声，柔和有亲和力
@@ -22,8 +36,8 @@ ollama:
   num_ctx: 8192
 styles:
   写实风格:
-    llm_model: qwen3:8b
-    image_ckpt: flux1-schnell-Q5_K_S.gguf
+    llm_model: deepseek-v4-flash
+    image_ckpt: flux1-dev-Q5_K_S.gguf
     image_model_type: flux
     video_model: ltx-2.3-mlx-q4
     video_model_type: ltx_mlx
@@ -36,6 +50,10 @@ styles:
     - FLUX.1-schnell-Q5_K_S.gguf
     - Realistic-Vision-V5.1.safetensors
     - v1-5-pruned-emaonly.safetensors
+    loras:
+    - name: flux-super-realism.safetensors
+      strength: 0.8
+      trigger: Super Realism
     keywords:
     - 写实
     - 电影级光影
@@ -49,7 +67,7 @@ styles:
     subtitle_mode: rule
     subtitle_lang: zh
   国风古风:
-    llm_model: qwen3:8b
+    llm_model: deepseek-v4-flash
     image_ckpt: v1-5-pruned-emaonly.safetensors
     image_model_type: sd15
     video_model: ltx-2.3-mlx-q4
@@ -62,6 +80,10 @@ styles:
     - Anything V5.safetensors
     - Chinese Ink Painting LoRA
     - Guofeng LoRA
+    loras:
+    - name: SD1.5/GuoFeng3.2_Lora.safetensors
+      strength: 0.7
+      trigger: china dress, chinese clothes, hair ornament, east asian architecture, beautiful face
     keywords:
     - 国风古风
     - 工笔彩绘
@@ -71,7 +93,7 @@ styles:
     - 书法笔触
     neg_prompt: 西方油画, 现代简约, 赛博朋克, 低质量, 模糊, 变形, 水印
   复古港风:
-    llm_model: qwen3:8b
+    llm_model: deepseek-v4-flash
     image_ckpt: Realistic-Vision-V5.1.safetensors
     image_model_type: sd15
     video_model: ltx-2.3-mlx-q4
@@ -82,6 +104,10 @@ styles:
     - Realistic-Vision-V5.1.safetensors
     - v1-5-pruned-emaonly.safetensors
     - Retro Hong Kong LoRA
+    loras:
+    - name: HongKong style v1.0.safetensors
+      strength: 0.7
+      trigger: HongKong style, HongKong
     keywords:
     - 复古港风
     - 胶片颗粒
@@ -91,7 +117,7 @@ styles:
     - 暖黄光
     neg_prompt: 现代干净配色, 扁平光, 低对比, 低质量, 模糊, 变形, 水印
   蒸汽波:
-    llm_model: qwen3:8b
+    llm_model: deepseek-v4-flash
     image_ckpt: v1-5-pruned-emaonly.safetensors
     image_model_type: sd15
     video_model: ltx-2.3-mlx-q4
@@ -101,6 +127,10 @@ styles:
     recommended_models:
     - v1-5-pruned-emaonly.safetensors
     - Vaporwave LoRA
+    loras:
+    - name: vapor_graphic-V2.safetensors
+      strength: 0.7
+      trigger: vapor_graphic
     keywords:
     - 蒸汽波
     - 粉紫蓝配色
@@ -110,7 +140,7 @@ styles:
     - 迷幻超现实
     neg_prompt: 写实纹理, 灰暗低饱和, 低质量, 模糊, 变形, 水印
   蒸汽朋克:
-    llm_model: qwen3:8b
+    llm_model: deepseek-v4-flash
     image_ckpt: v1-5-pruned-emaonly.safetensors
     image_model_type: sd15
     video_model: ltx-2.3-mlx-q4
@@ -120,6 +150,12 @@ styles:
     recommended_models:
     - v1-5-pruned-emaonly.safetensors
     - Steampunk LoRA
+    loras:
+    - name: steampunk.safetensors
+      strength: 0.7
+      trigger: steampunk
+    - name: SteamPunkMachineryv2.safetensors
+      strength: 0.6
     keywords:
     - 蒸汽朋克
     - 黄铜机械
@@ -129,7 +165,7 @@ styles:
     - 暖琥珀工坊光
     neg_prompt: 现代光滑塑料, 干净科幻, 低质量, 模糊, 变形, 水印
   赛博朋克:
-    llm_model: qwen3:8b
+    llm_model: deepseek-v4-flash
     image_ckpt: v1-5-pruned-emaonly.safetensors
     image_model_type: sd15
     video_model: ltx-2.3-mlx-q4
@@ -139,6 +175,10 @@ styles:
     recommended_models:
     - v1-5-pruned-emaonly.safetensors
     - Cyberpunk LoRA
+    loras:
+    - name: cyberpunk_edgerunners_offset.safetensors
+      strength: 1.0
+      trigger: cyberpunk edgerunners
     keywords:
     - 赛博朋克
     - 霓虹灯
@@ -148,7 +188,7 @@ styles:
     - 高科技
     neg_prompt: 田园, 古风, 低质量, 模糊, 变形, 水印
   治愈系ins:
-    llm_model: qwen3:8b
+    llm_model: deepseek-v4-flash
     image_ckpt: v1-5-pruned-emaonly.safetensors
     image_model_type: sd15
     video_model: ltx-2.3-mlx-q4
@@ -158,6 +198,10 @@ styles:
     recommended_models:
     - v1-5-pruned-emaonly.safetensors
     - Cozy Daily LoRA
+    loras:
+    - name: "cozy anime_20230630155224.safetensors"
+      strength: 0.7
+      trigger: cozy anime
     keywords:
     - 治愈系
     - 暖调清新
@@ -167,7 +211,7 @@ styles:
     - 日系清爽
     neg_prompt: 暗黑压抑, 高对比戏剧, 冷硬光, 低质量, 模糊, 变形, 水印
   极简主义:
-    llm_model: qwen3:8b
+    llm_model: deepseek-v4-flash
     image_ckpt: v1-5-pruned-emaonly.safetensors
     image_model_type: sd15
     video_model: ltx-2.3-mlx-q4
@@ -177,6 +221,10 @@ styles:
     recommended_models:
     - v1-5-pruned-emaonly.safetensors
     - Minimalist Morandi LoRA
+    loras:
+    - name: anime_minimalist_v1-000020.safetensors
+      strength: 0.8
+      trigger: anime minimalist
     keywords:
     - 极简主义
     - 留白构图
@@ -186,7 +234,7 @@ styles:
     - 克制
     neg_prompt: 杂乱, 过多细节, 高饱和噪点, 低质量, 模糊, 变形, 水印
   日系动漫:
-    llm_model: qwen3:8b
+    llm_model: deepseek-v4-flash
     image_ckpt: Anything V5.safetensors
     image_model_type: sd15
     video_model: ltx-2.3-mlx-q4
@@ -198,6 +246,10 @@ styles:
     - Anything V5.safetensors
     - Counterfeit-V3.0.safetensors
     - v1-5-pruned-emaonly.safetensors
+    loras:
+    - name: shinkai_makoto_offset.safetensors
+      strength: 0.8
+      trigger: shinkai makoto
     keywords:
     - 日系动漫
     - 赛璐璐平涂
@@ -207,7 +259,7 @@ styles:
     - 新海诚
     neg_prompt: 写实, 真人, 3D照片, 低质量, 模糊, 变形, 水印
   3D卡通:
-    llm_model: qwen3:8b
+    llm_model: deepseek-v4-flash
     image_ckpt: v1-5-pruned-emaonly.safetensors
     image_model_type: sd15
     video_model: ltx-2.3-mlx-q4
@@ -219,6 +271,10 @@ styles:
     - v1-5-pruned-emaonly.safetensors
     - 3D Render LoRA
     - FLUX.1-dev.safetensors
+    loras:
+    - name: SD1.5/3DRedmond15V-LiberteRedmond-3DRenderStyle-3DRenderAF.safetensors
+      strength: 0.8
+      trigger: 3D Render Style, 3DRenderAF
     keywords:
     - 3D卡通
     - 皮克斯
@@ -228,7 +284,7 @@ styles:
     - 圆润造型
     neg_prompt: 扁平2D, 脏污材质, 硬光, 低质量, 模糊, 变形, 水印
   Q版卡通:
-    llm_model: qwen3:8b
+    llm_model: deepseek-v4-flash
     image_ckpt: Anything V5.safetensors
     image_model_type: sd15
     video_model: ltx-2.3-mlx-q4
@@ -239,6 +295,10 @@ styles:
     - Anything V5.safetensors
     - v1-5-pruned-emaonly.safetensors
     - Chibi LoRA
+    loras:
+    - name: normal chibi.safetensors
+      strength: 0.8
+      trigger: chibi
     keywords:
     - Q版卡通
     - 二头身
@@ -248,7 +308,7 @@ styles:
     - 可爱
     neg_prompt: 写实比例, 精细解剖, 灰暗色调, 低质量, 模糊, 变形, 水印
   像素艺术:
-    llm_model: qwen3:8b
+    llm_model: deepseek-v4-flash
     image_ckpt: v1-5-pruned-emaonly.safetensors
     image_model_type: sd15
     video_model: ltx-2.3-mlx-q4
@@ -258,6 +318,10 @@ styles:
     recommended_models:
     - v1-5-pruned-emaonly.safetensors
     - Pixel Art LoRA
+    loras:
+    - name: SD1.5/PixelArtRedmond15V-PixelArt-PIXARFK.safetensors
+      strength: 0.8
+      trigger: Pixel Art, PIXARFK
     keywords:
     - 像素艺术
     - 16-bit怀旧
@@ -267,7 +331,7 @@ styles:
     - 街机
     neg_prompt: 平滑渐变, 照片级, 抗锯齿模糊, 低质量, 模糊, 水印
   古典油画:
-    llm_model: qwen3:8b
+    llm_model: deepseek-v4-flash
     image_ckpt: v1-5-pruned-emaonly.safetensors
     image_model_type: sd15
     video_model: ltx-2.3-mlx-q4
@@ -277,6 +341,10 @@ styles:
     recommended_models:
     - v1-5-pruned-emaonly.safetensors
     - Classical Oil Painting LoRA
+    loras:
+    - name: bichu-v0612.safetensors
+      strength: 0.8
+      trigger: bichu, oil painting, Impressionism
     keywords:
     - 古典油画
     - 厚重笔触
@@ -286,7 +354,7 @@ styles:
     - 暖金调
     neg_prompt: 数字扁平, 塑料, 干净卡通, 低质量, 模糊, 变形, 水印
   水彩:
-    llm_model: qwen3:8b
+    llm_model: deepseek-v4-flash
     image_ckpt: v1-5-pruned-emaonly.safetensors
     image_model_type: sd15
     video_model: ltx-2.3-mlx-q4
@@ -296,6 +364,10 @@ styles:
     recommended_models:
     - v1-5-pruned-emaonly.safetensors
     - Watercolor LoRA
+    loras:
+    - name: watercolor_20230906151716-000018.safetensors
+      strength: 0.75
+      trigger: watercolor
     keywords:
     - 水彩
     - 通透晕染
@@ -305,7 +377,7 @@ styles:
     - 空气感
     neg_prompt: 硬边缘, 高饱和色块, 油腻, 低质量, 模糊, 变形, 水印
   素描:
-    llm_model: qwen3:8b
+    llm_model: deepseek-v4-flash
     image_ckpt: v1-5-pruned-emaonly.safetensors
     image_model_type: sd15
     video_model: ltx-2.3-mlx-q4
@@ -315,6 +387,10 @@ styles:
     recommended_models:
     - v1-5-pruned-emaonly.safetensors
     - Sketch Pencil LoRA
+    loras:
+    - name: Sketch_offcolor.safetensors
+      strength: 0.7
+      trigger: monochrome, traditional media, sketch
     keywords:
     - 素描
     - 铅笔速写
@@ -324,8 +400,8 @@ styles:
     - 留白
     neg_prompt: 全彩, 光滑阴影, 渲染填充, 低质量, 模糊, 变形, 水印
   电影级质感:
-    llm_model: qwen3:8b
-    image_ckpt: FLUX.1-dev.safetensors
+    llm_model: deepseek-v4-flash
+    image_ckpt: flux1-dev-Q5_K_S.gguf
     image_model_type: flux
     video_model: ltx-2.3-mlx-q4
     video_model_type: ltx_mlx
@@ -335,6 +411,10 @@ styles:
     - FLUX.1-dev.safetensors
     - FLUX.1-schnell-Q5_K_S.gguf
     - v1-5-pruned-emaonly.safetensors
+    loras:
+    - name: flux-cinematic-octane.safetensors
+      strength: 0.8
+      trigger: cinematic_octane
     keywords:
     - 电影级质感
     - 2.35宽画幅
@@ -352,12 +432,18 @@ pipeline:
   max_retries: 3
   retry_delay: 2.0
   review_enabled: true
-  default_model: deepseek-chat
+  default_model: deepseek-v4-flash
+# 出图质量自评闭环：生成图 → 视觉模型打 tag → 按 tag 算分 → 不达标自动重生成
+image_qc:
+  enabled: true
+  model: deepseek-v4-flash
+  threshold: 75
+  max_retries: 2
 frontend:
   host: 127.0.0.1
   port: 8888
   debug: true
 intel:
-  enabled: false
+  enabled: true
   source_dir: storage/intel/source/
   cases_dir: storage/intel/cases/

@@ -4,7 +4,7 @@
     1. 顶部 5 节点进度条（Script → Storyboard → Image → Video → Final）
     2. 中间「当前步骤审查卡片」，每步内容不同
     3. 底部左右按钮：上一步 / 继续
-  数据来源：SSE EventSource 订阅 /pipeline/events?run_id=__demo__
+  数据来源：SSE EventSource 订阅 /pipeline/events?run_id=<真实管线 run_id>
     事件类型：progress / checkpoint / done / error / end
 -->
 <template>
@@ -17,6 +17,23 @@
         <span v-if="done" class="tag-done">✅ 已全部完成</span>
       </p>
     </header>
+
+    <!-- ========== 真实创作运行栏：一句话启动真实管线 / 恢复进行中 ========== -->
+    <div class="runbar">
+      <input
+        v-model="newIdea"
+        class="runbar-input"
+        type="text"
+        placeholder="输入一句话/题材，例如：末世废土下少年独自寻找妹妹…"
+        @keyup.enter="startRealRun"
+      />
+      <select v-model="runStyle" class="runbar-select" :disabled="!styles.length">
+        <option v-for="s in styles" :key="s" :value="s">{{ s }}</option>
+      </select>
+      <button class="runbar-btn" @click="startRealRun">▶ 开始真实创作</button>
+      <button class="runbar-ghost" @click="loadActive">↻ 恢复进行中</button>
+      <span class="real-tag" :title="runId">真实运行中</span>
+    </div>
 
     <!-- ========== 5 节点进度条 ========== -->
     <div class="stepper">
@@ -137,9 +154,9 @@
             class="char-card"
           >
             <div class="char-image-wrap">
-              <!-- picsum.photos 占位图，seed 不同保证每张图不一样 -->
+              <!-- 真实定妆照（后端转好的 URL）；无则回退到占位图 -->
               <img
-                :src="`https://picsum.photos/seed/${char.image_seed || 'char' + idx}/420/560`"
+                :src="char.url || `https://picsum.photos/seed/${char.image_seed || 'char' + idx}/420/560`"
                 :alt="char.suggested_name || `角色${idx + 1}`"
                 class="char-image"
                 loading="lazy"
@@ -259,17 +276,29 @@
         <span v-if="sseError" class="error-text">
           ⚠️ 连接中断：{{ sseError }}
         </span>
+        <span v-else-if="awaitingReview" class="review-tag">
+          ⏸️ 管线等待你确认：查看内容后点「确认继续」放行，或「拒绝跳过」
+        </span>
         <span v-else class="status-text">
           后端 SSE：{{ eventCount }} 条事件已接收
         </span>
       </div>
-      <button
-        class="action-btn action-next"
-        :disabled="isLoading(step) || (step === 4 && !done)"
-        @click="handleNext"
-      >
-        {{ step === 4 ? '完成 🎉' : '继续 →' }}
-      </button>
+      <div class="action-right">
+        <button
+          v-if="awaitingReview"
+          class="action-btn action-reject"
+          @click="handleReject"
+        >
+          拒绝并跳过
+        </button>
+        <button
+          class="action-btn action-next"
+          :disabled="isLoading(step) || (step === 4 && !done && !awaitingReview)"
+          @click="handleNext"
+        >
+          {{ step === 4 && !awaitingReview ? '完成 🎉' : '确认继续 ⏩' }}
+        </button>
+      </div>
     </footer>
   </div>
 </template>
@@ -285,10 +314,28 @@
  */
 import { ref, reactive, computed, onMounted, onBeforeUnmount } from 'vue'
 
-// ── SSE 端点地址：和后端 /pipeline/events 对齐（与 FastAPI 同端口 8888）
-const SSE_URL = 'http://localhost:8888/pipeline/events?run_id=__demo__'
+// ── 真实运行来源：URL 参数 ?run_id=xxx 订阅真实管线事件；缺省尝试恢复最近真实运行 ──
+const API_BASE = 'http://localhost:8888'
+function sseUrl(run_id: string): string {
+  return `${API_BASE}/pipeline/events?run_id=${encodeURIComponent(run_id)}`
+}
+const runParam = new URLSearchParams(location.search).get('run_id') || ''
+const runId = ref<string>(runParam.trim() ? runParam.trim() : '')
 
-// ── 5 步定义（对应后端 step 0-4）
+// ── 真实创作运行栏：输入一句话 + 风格 → POST /pipeline/run ──
+const newIdea = ref<string>('')
+const runStyle = ref<string>('')
+const styles = ref<string[]>([])
+
+// ── 情报站「推入管线」参数：t=选题输入，auto=1 进入页面后自动启动 ──
+{
+  const qs = new URLSearchParams(location.search)
+  const topic = (qs.get('t') || '').trim()
+  if (topic) newIdea.value = topic
+}
+const autoStart = new URLSearchParams(location.search).get('auto') === '1'
+
+// ── 5 步定义（对应后端 step 0-4）──
 const stepNodes = [
   { label: '剧本审查', key: 'script' },
   { label: '分镜审查', key: 'storyboard' },
@@ -303,6 +350,8 @@ const overallPercent = ref<number>(0) // 总进度百分比 0-100
 const eventCount = ref<number>(0)     // 已接收事件数量（调试信息）
 const done = ref<boolean>(false)      // 是否收到 done 事件
 const sseError = ref<string>('')      // SSE 错误信息
+// 真实模式：管线正停在某个「审核断点」等待人工确认（点「继续」= 批准放行）
+const awaitingReview = ref<boolean>(false)
 
 // 记录哪些 step 已收到 payload（用于判断 loading vs 内容）
 const stepReady = reactive<Record<number, boolean>>({
@@ -332,6 +381,8 @@ const storyboardShots = reactive<Shot[]>([])
 // ── Step 2：角色图 ────────────────────────────────────────────
 interface CharacterItem {
   image_seed: string
+  // 真实定妆照的浏览器可访问 URL（后端 _wiz_media_url 已转好）；空则回退占位图
+  url?: string
   suggested_name?: string
   assigned_name: string
 }
@@ -398,10 +449,11 @@ function handlePrev() {
 }
 
 // ── 按钮：继续 / 完成 ──────────────────────────────────────────
+// 真实模式：「确认继续」= 调用 /approve 放行审核断点，让管线继续（不毁数据）
 function handleNext() {
-  if (step.value === 4 && done.value) {
-    // 最后一步：演示 toast，不做真实调用
-    alert('🎉 5 步审查全部完成！（演示模式，无真实发布）')
+  // 停在审核断点时，点「确认继续」= 批准放行
+  if (awaitingReview.value) {
+    approveCurrent()
     return
   }
   if (step.value < 4 && stepReady[step.value + 1]) {
@@ -409,12 +461,62 @@ function handleNext() {
   }
 }
 
-// ── 最终页大按钮占位 ───────────────────────────────────────────
+// ── 真实模式：批准当前审核断点（放行管线，不修改 checkpoints 数据） ──
+async function approveCurrent() {
+  const rid = runId.value
+  try {
+    const resp = await fetch(`${API_BASE}/api/v1/pipeline/approve/${encodeURIComponent(rid)}`, {
+      method: 'POST',
+    })
+    const j = await resp.json().catch(() => ({}))
+    if (!resp.ok) {
+      sseError.value = `批准失败：${j.detail || resp.status}`
+      return
+    }
+    awaitingReview.value = false
+    stepMessages[step.value] = '✅ 已确认，管线继续推进中…'
+  } catch (err) {
+    sseError.value = `批准失败：${(err as Error).message}`
+  }
+}
+
+// ── 真实模式：拒绝当前审核断点（跳过该步骤继续） ───────────────
+async function handleReject() {
+  const rid = runId.value
+  try {
+    const resp = await fetch(`${API_BASE}/api/v1/pipeline/reject/${encodeURIComponent(rid)}`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: '{}',
+    })
+    const j = await resp.json().catch(() => ({}))
+    if (!resp.ok) {
+      sseError.value = `拒绝失败：${j.detail || resp.status}`
+      return
+    }
+    awaitingReview.value = false
+    stepMessages[step.value] = '⏭️ 已拒绝，管线跳过此步骤继续…'
+  } catch (err) {
+    sseError.value = `拒绝失败：${(err as Error).message}`
+  }
+}
+
+// ── 最终页大按钮 ───────────────────────────────────────────────
 function handleExportObsidian() {
-  alert('📝 已触发「导出到 Obsidian」（演示模式，占位动作）')
+  // 创作笔记已由管线收尾自动生成（pipeline/notes），此处仅为提示，不重复触发
+  alert('📝 已生成创作笔记并保存到项目 storage；写入 Obsidian 知识库为后续能力')
 }
 function handleDownload() {
-  alert('⬇️ 已触发「下载成片」（演示模式，占位动作）')
+  if (!videoUrl.value) {
+    alert('成片尚未生成，无法下载')
+    return
+  }
+  const a = document.createElement('a')
+  a.href = videoUrl.value
+  a.download = ''
+  document.body.appendChild(a)
+  a.click()
+  a.remove()
 }
 
 // ── SSE 事件处理：progress ─────────────────────────────────────
@@ -432,11 +534,22 @@ function handleProgressEvent(raw: any) {
     stepMessages[stepIdx] = raw.message
   }
 
+  // 后端 on_review 会把断点译为「⏸️ 等待审核：…」的 progress 事件，
+  // 前端据此置 awaitingReview，让「确认继续」去调 /approve（此事件通过 /pipeline/events 可达）
+  if (typeof raw.message === 'string' && raw.message.includes('等待审核')) {
+    awaitingReview.value = true
+  }
+
   // 填充对应 step 的 payload
   const payload = raw.payload || {}
 
+  // 只有「带内容」的 payload 才点亮步骤：真实运行中模型执行期间会收到
+  // 无 payload 的「进行中」事件（仅刷新提示文案），不能提前点亮成空白卡片。
+  const payloadHasKeys = !!payload && typeof payload === 'object'
+    && !Array.isArray(payload) && Object.keys(payload).length > 0
+
   // —— Step 0：剧本 ——
-  if (stepIdx === 0 && payload) {
+  if (stepIdx === 0 && payloadHasKeys) {
     scriptTitle.value = payload.title || ''
     scriptText.value = payload.script || ''
     stepReady[0] = true
@@ -458,6 +571,7 @@ function handleProgressEvent(raw: any) {
   if (stepIdx === 2 && payload && Array.isArray(payload.characters)) {
     characterList.splice(0, characterList.length, ...payload.characters.map((c: any) => ({
       image_seed: c.image_seed || ('char_' + Math.random().toString(36).slice(2, 7)),
+      url: c.url || '',
       suggested_name: c.suggested_name || '',
       assigned_name: '',
     })))
@@ -465,7 +579,7 @@ function handleProgressEvent(raw: any) {
   }
 
   // —— Step 3：视频预览 ——
-  if (stepIdx === 3 && payload) {
+  if (stepIdx === 3 && payloadHasKeys) {
     videoUrl.value = payload.video_url || ''
     videoDuration.value = payload.duration_sec ?? '—'
     videoResolution.value = payload.resolution || '—'
@@ -474,7 +588,7 @@ function handleProgressEvent(raw: any) {
   }
 
   // —— Step 4：最终发布 ——
-  if (stepIdx === 4 && payload) {
+  if (stepIdx === 4 && payloadHasKeys) {
     Object.keys(payload).forEach(k => { finalPayload[k] = payload[k] })
     stepReady[4] = true
   }
@@ -493,6 +607,7 @@ function handleProgressEvent(raw: any) {
 // ── SSE 事件处理：done ─────────────────────────────────────────
 function handleDoneEvent(raw: any) {
   done.value = true
+  awaitingReview.value = false
   overallPercent.value = 100
   if (typeof raw.message === 'string') {
     stepMessages[4] = raw.message
@@ -505,7 +620,8 @@ function handleDoneEvent(raw: any) {
 // ── 建立 SSE 订阅 ──────────────────────────────────────────────
 function startSSE() {
   try {
-    eventSource = new EventSource(SSE_URL, { withCredentials: false })
+    // 真实运行与演示共用同一个处理器：仅把订阅的 run_id 换掉
+    eventSource = new EventSource(sseUrl(runId.value), { withCredentials: false })
 
     // —— progress 事件（主事件，每个步骤完成推一次）——
     eventSource.addEventListener('progress', (e: MessageEvent) => {
@@ -591,9 +707,99 @@ function startSSE() {
   }
 }
 
+// ── 真实创作：POST /run 启动真实管线 ───────────────────────────
+function resetRunState() {
+  // 清空上一轮展示的内容，防止串场（真实运行/演示切换时调用）
+  step.value = 0
+  done.value = false
+  awaitingReview.value = false
+  sseError.value = ''
+  eventCount.value = 0
+  overallPercent.value = 0
+  for (const i of [0, 1, 2, 3, 4]) stepReady[i] = false
+  scriptTitle.value = ''
+  scriptText.value = ''
+  storyboardShots.splice(0, storyboardShots.length)
+  characterList.splice(0, characterList.length)
+  videoUrl.value = ''
+}
+
+async function startRealRun() {
+  const text = newIdea.value.trim()
+  if (text.length < 2) {
+    alert('请先输入创作想法（一句话/题材，至少 2 个字）')
+    return
+  }
+  const style = runStyle.value || '写实风格'
+  try {
+    const resp = await fetch(`${API_BASE}/api/v1/pipeline/run`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ input: text, style: [style], resume: false }),
+    })
+    if (!resp.ok) {
+      const j = await resp.json().catch(() => ({}))
+      sseError.value = `启动失败：${j.detail || resp.status}`
+      return
+    }
+    const j = await resp.json()
+    // 切换到真实 run_id 并重连 SSE（后端事件总线会先回放历史，再增量推送）
+    runId.value = j.pipeline_id
+    history.replaceState(null, '', `/pipeline?run_id=${encodeURIComponent(runId.value)}`)
+    resetRunState()
+    eventSource?.close()
+    startSSE()
+    window.scrollTo({ top: 0, behavior: 'smooth' })
+  } catch (err) {
+    sseError.value = `启动失败：${(err as Error).message}`
+  }
+}
+
+async function loadActive(silent = false) {
+  // 从后端 /active 找回最近一条进行中/等待审核的管线并订阅（页面刷新后恢复审核）
+  try {
+    const resp = await fetch(`${API_BASE}/api/v1/pipeline/active`)
+    if (!resp.ok) return
+    const j = await resp.json()
+    const entry = (j.active || []).find(
+      (a: any) => a.status === 'review' || a.status === 'running' || a.status === 'queued'
+    )
+    if (!entry) {
+      if (!silent) alert('当前没有进行中或等待审核的管线')
+      return
+    }
+    runId.value = entry.pipeline_id
+    history.replaceState(null, '', `/pipeline?run_id=${encodeURIComponent(runId.value)}`)
+    resetRunState()
+    eventSource?.close()
+    startSSE()
+  } catch (err) {
+    sseError.value = `恢复失败：${(err as Error).message}`
+  }
+}
+
 // ── 生命周期 ───────────────────────────────────────────────────
 onMounted(() => {
-  startSSE()
+  // 预载风格列表（供「开始真实创作」下拉选择）
+  fetch(`${API_BASE}/api/v1/pipeline/styles`)
+    .then(r => (r.ok ? r.json() : {}))
+    .then((j: any) => {
+      const names = ((j && j.styles) || []).map((s: any) => (typeof s === 'string' ? s : s?.name)).filter(Boolean)
+      styles.value = names
+      if (!runStyle.value && names.length) runStyle.value = names[0]
+    })
+    .catch(() => {})
+  // 默认真实链路：有 run_id 则订阅该运行；否则尝试恢复最近进行中的真实管线。
+  // 不再有 __demo__ 演示流，无运行时不展示任何假数据。
+  if (runId.value) {
+    startSSE()
+  } else {
+    loadActive(true)
+  }
+  // 情报站「推入管线」自动启动：t 已填入 newIdea，auto=1 时直接开始真实创作
+  if (autoStart && newIdea.value.trim().length >= 2) {
+    setTimeout(() => startRealRun(), 300)
+  }
 })
 
 onBeforeUnmount(() => {
@@ -611,23 +817,26 @@ onBeforeUnmount(() => {
   margin: 0 auto;
   padding: 48px 60px 80px;
   box-sizing: border-box;
-  font-family: -apple-system, BlinkMacSystemFont, "PingFang SC", "Microsoft YaHei",
-               "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
-  color: #1f2937;
-  background: linear-gradient(180deg, #fafbff 0%, #f5f6fb 100%);
+  font-family: var(--font-body), "PingFang SC", "Microsoft YaHei", sans-serif;
+  color: var(--text-0);
+  background:
+    radial-gradient(1200px 500px at 50% -10%, rgba(217,169,78,0.05), transparent 60%),
+    var(--bg-0);
   min-height: 100vh;
 }
 
 .page-header { margin-bottom: 32px; }
 .page-header h1 {
   margin: 0 0 6px;
+  font-family: var(--font-display);
   font-size: 28px;
-  font-weight: 700;
-  letter-spacing: 0.3px;
+  font-weight: 600;
+  letter-spacing: 2px;
+  color: var(--text-0);
 }
 .subtitle {
   margin: 0;
-  color: #6b7280;
+  color: var(--text-2);
   font-size: 14px;
 }
 .tag-done {
@@ -635,8 +844,8 @@ onBeforeUnmount(() => {
   margin-left: 10px;
   padding: 2px 10px;
   border-radius: 999px;
-  background: #ecfdf5;
-  color: #047857;
+  background: var(--gold-dim);
+  color: var(--gold-bright);
   font-size: 12px;
   font-weight: 600;
 }
@@ -657,19 +866,19 @@ onBeforeUnmount(() => {
 .node-circle {
   width: 38px; height: 38px;
   border-radius: 50%;
-  background: #e5e7eb;
-  color: #9ca3af;
+  background: var(--bg-3);
+  color: var(--text-2);
   font-weight: 700;
   display: flex; align-items: center; justify-content: center;
   font-size: 16px;
-  border: 2px solid transparent;
+  border: 2px solid var(--line-strong);
   transition: all 0.3s ease;
   flex-shrink: 0;
 }
 .node-label {
   margin-left: 10px;
   font-size: 13px;
-  color: #9ca3af;
+  color: var(--text-2);
   font-weight: 500;
   white-space: nowrap;
 }
@@ -680,54 +889,56 @@ onBeforeUnmount(() => {
   left: 38px;
   width: calc(100% - 38px);
   height: 2px;
-  background: #e5e7eb;
+  background: var(--bg-3);
   z-index: 0;
 }
 .connector-fill {
   height: 100%;
-  background: #4f46e5;
+  background: var(--gold);
   transition: width 0.5s ease;
 }
 /* 已完成节点 */
 .step-node.is-done .node-circle {
-  background: #10b981;
-  color: #fff;
-  border-color: #10b981;
+  background: var(--green);
+  color: #08130e;
+  border-color: var(--green);
+  box-shadow: 0 0 10px rgba(76,191,138,0.35);
 }
-.step-node.is-done .node-label { color: #065f46; }
+.step-node.is-done .node-label { color: var(--green); }
 /* 当前节点 */
 .step-node.is-current:not(.is-done) .node-circle {
-  background: #fff;
-  color: #4f46e5;
-  border-color: #4f46e5;
-  box-shadow: 0 0 0 4px rgba(79, 70, 229, 0.12);
+  background: var(--bg-2);
+  color: var(--gold-bright);
+  border-color: var(--gold);
+  box-shadow: 0 0 0 4px var(--gold-dim);
   transform: scale(1.05);
 }
 .step-node.is-current:not(.is-done) .node-label {
-  color: #4f46e5;
+  color: var(--gold-bright);
   font-weight: 600;
 }
 /* 整体细线进度 */
 .overall-bar {
   margin-top: 20px;
   height: 4px;
-  background: #e5e7eb;
+  background: var(--bg-3);
   border-radius: 999px;
   overflow: hidden;
 }
 .overall-bar-fill {
   height: 100%;
-  background: linear-gradient(90deg, #6366f1, #4f46e5);
+  background: linear-gradient(90deg, #b9842f, var(--gold-bright));
   border-radius: 999px;
+  box-shadow: 0 0 12px rgba(217,169,78,0.5);
   transition: width 0.5s ease;
 }
 
 /* ==================== 审查卡片 ==================== */
 .card {
-  background: #ffffff;
-  border: 1px solid #e5e7eb;
+  background: var(--bg-2);
+  border: 1px solid var(--line);
   border-radius: 14px;
-  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.04), 0 6px 20px rgba(0, 0, 0, 0.03);
+  box-shadow: 0 6px 20px rgba(0, 0, 0, 0.25);
   padding: 28px 32px;
 }
 .card-header {
@@ -736,13 +947,13 @@ onBeforeUnmount(() => {
   align-items: flex-start;
   margin-bottom: 24px;
   padding-bottom: 18px;
-  border-bottom: 1px solid #f0f0f3;
+  border-bottom: 1px solid var(--line);
 }
 .step-badge {
   display: inline-block;
   padding: 3px 10px;
-  background: #eef2ff;
-  color: #4f46e5;
+  background: var(--gold-dim);
+  color: var(--gold-bright);
   font-size: 12px;
   font-weight: 600;
   border-radius: 6px;
@@ -752,23 +963,24 @@ onBeforeUnmount(() => {
   margin: 0 0 4px;
   font-size: 20px;
   font-weight: 700;
+  color: var(--text-0);
 }
 .card-subtitle {
   margin: 0;
-  color: #6b7280;
+  color: var(--text-2);
   font-size: 13px;
 }
 .loading-inline {
   display: flex; align-items: center; gap: 8px;
-  color: #6366f1;
+  color: var(--gold-bright);
   font-size: 13px;
   font-weight: 500;
 }
 .spinner {
   width: 14px; height: 14px;
   border-radius: 50%;
-  border: 2px solid #c7d2fe;
-  border-top-color: #4f46e5;
+  border: 2px solid var(--gold-dim);
+  border-top-color: var(--gold-bright);
   animation: spin 0.8s linear infinite;
 }
 @keyframes spin { to { transform: rotate(360deg); } }
@@ -777,7 +989,7 @@ onBeforeUnmount(() => {
 .empty-state {
   padding: 48px 16px;
   text-align: center;
-  color: #6b7280;
+  color: var(--text-2);
 }
 .empty-icon { font-size: 40px; margin-bottom: 12px; opacity: 0.7; }
 .empty-text { font-size: 15px; margin-bottom: 20px; }
@@ -785,14 +997,14 @@ onBeforeUnmount(() => {
   width: 260px;
   margin: 0 auto;
   height: 3px;
-  background: #e5e7eb;
+  background: var(--bg-3);
   border-radius: 999px;
   overflow: hidden;
 }
 .thin-loading-bar {
   height: 100%;
   width: 30%;
-  background: linear-gradient(90deg, #a5b4fc, #4f46e5, #a5b4fc);
+  background: linear-gradient(90deg, #b9842f, var(--gold-bright), #b9842f);
   background-size: 200% 100%;
   border-radius: 999px;
   animation: thin-shine 1.5s ease-in-out infinite;
@@ -810,45 +1022,51 @@ onBeforeUnmount(() => {
   margin-bottom: 6px;
   font-size: 13px;
   font-weight: 600;
-  color: #374151;
+  color: var(--text-1);
 }
 .field-input {
   width: 100%;
   padding: 10px 14px;
-  border: 1px solid #d1d5db;
+  border: 1px solid var(--line-strong);
   border-radius: 8px;
   font-size: 14px;
+  background: var(--bg-1);
+  color: var(--text-0);
   box-sizing: border-box;
   transition: border-color 0.15s;
 }
+.field-input::placeholder { color: var(--text-2); }
 .field-input:focus {
   outline: none;
-  border-color: #6366f1;
-  box-shadow: 0 0 0 3px rgba(99, 102, 241, 0.15);
+  border-color: var(--gold);
+  box-shadow: 0 0 0 3px var(--gold-dim);
 }
 .field-textarea {
   width: 100%;
   padding: 12px 14px;
-  border: 1px solid #d1d5db;
+  border: 1px solid var(--line-strong);
   border-radius: 8px;
   font-size: 14px;
   line-height: 1.7;
+  background: var(--bg-1);
+  color: var(--text-0);
   box-sizing: border-box;
   resize: vertical;
   font-family: inherit;
   transition: border-color 0.15s;
 }
+.field-textarea::placeholder { color: var(--text-2); }
 .field-textarea:focus {
   outline: none;
-  border-color: #6366f1;
-  box-shadow: 0 0 0 3px rgba(99, 102, 241, 0.15);
+  border-color: var(--gold);
+  box-shadow: 0 0 0 3px var(--gold-dim);
 }
 .hint {
   margin-top: 18px;
   padding: 10px 14px;
-  background: #fef3c7;
-  border-left: 3px solid #f59e0b;
-  color: #92400e;
+  background: var(--gold-dim);
+  border-left: 3px solid var(--gold);
+  color: var(--gold-bright);
   font-size: 13px;
   border-radius: 4px;
 }
@@ -860,8 +1078,8 @@ onBeforeUnmount(() => {
   gap: 18px;
 }
 .shot-card {
-  background: #fafafa;
-  border: 1px solid #e5e7eb;
+  background: var(--bg-3);
+  border: 1px solid var(--line);
   border-radius: 10px;
   padding: 16px;
 }
@@ -870,18 +1088,18 @@ onBeforeUnmount(() => {
   margin-bottom: 12px;
 }
 .shot-id {
-  font-family: "SF Mono", Menlo, Consolas, monospace;
+  font-family: var(--font-mono), Menlo, Consolas, monospace;
   font-weight: 700;
   font-size: 13px;
-  color: #4f46e5;
-  background: #eef2ff;
+  color: var(--gold-bright);
+  background: var(--gold-dim);
   padding: 2px 8px;
   border-radius: 4px;
 }
 .shot-duration {
   font-size: 12px;
-  color: #6b7280;
-  background: #f3f4f6;
+  color: var(--text-2);
+  background: var(--bg-2);
   padding: 2px 8px;
   border-radius: 4px;
 }
@@ -890,37 +1108,40 @@ onBeforeUnmount(() => {
   display: block;
   font-size: 12px;
   font-weight: 600;
-  color: #6b7280;
+  color: var(--text-2);
   margin-bottom: 4px;
 }
 .shot-val {
   font-size: 14px;
-  color: #1f2937;
+  color: var(--text-0);
 }
 .shot-dialogue {
   font-style: italic;
-  color: #374151;
-  background: #fff;
+  color: var(--text-1);
+  background: var(--bg-1);
   padding: 6px 10px;
   border-radius: 6px;
-  border: 1px dashed #d1d5db;
+  border: 1px dashed var(--line-strong);
   display: inline-block;
 }
 .shot-prompt {
   width: 100%;
   padding: 8px 10px;
-  border: 1px solid #d1d5db;
+  border: 1px solid var(--line-strong);
   border-radius: 6px;
   font-size: 12.5px;
-  font-family: "SF Mono", Menlo, Consolas, monospace;
+  font-family: var(--font-mono), Menlo, Consolas, monospace;
   line-height: 1.6;
+  background: var(--bg-1);
+  color: var(--text-0);
   box-sizing: border-box;
   resize: vertical;
 }
+.shot-prompt::placeholder { color: var(--text-2); }
 .shot-prompt:focus {
   outline: none;
-  border-color: #6366f1;
-  box-shadow: 0 0 0 2px rgba(99, 102, 241, 0.12);
+  border-color: var(--gold);
+  box-shadow: 0 0 0 2px var(--gold-dim);
 }
 
 /* ==================== Step 2：角色图 2×2 网格 ==================== */
@@ -930,20 +1151,21 @@ onBeforeUnmount(() => {
   gap: 18px;
 }
 .char-card {
-  background: #fff;
-  border: 1px solid #e5e7eb;
+  background: var(--bg-2);
+  border: 1px solid var(--line);
   border-radius: 10px;
   overflow: hidden;
-  transition: transform 0.2s, box-shadow 0.2s;
+  transition: transform 0.2s, box-shadow 0.2s, border-color 0.2s;
 }
 .char-card:hover {
   transform: translateY(-2px);
-  box-shadow: 0 6px 20px rgba(0, 0, 0, 0.06);
+  border-color: var(--gold);
+  box-shadow: 0 6px 20px rgba(0, 0, 0, 0.3);
 }
 .char-image-wrap {
   width: 100%;
   aspect-ratio: 3 / 4;
-  background: #f3f4f6;
+  background: var(--bg-3);
   overflow: hidden;
 }
 .char-image {
@@ -957,29 +1179,30 @@ onBeforeUnmount(() => {
   display: block;
   font-size: 12px;
   font-weight: 600;
-  color: #374151;
+  color: var(--text-1);
   margin-bottom: 6px;
 }
 .char-select {
   width: 100%;
   padding: 8px 10px;
-  border: 1px solid #d1d5db;
+  border: 1px solid var(--line-strong);
   border-radius: 6px;
   font-size: 14px;
-  background: #fff;
+  background: var(--bg-1);
+  color: var(--text-0);
   cursor: pointer;
 }
 .char-select:focus {
   outline: none;
-  border-color: #6366f1;
-  box-shadow: 0 0 0 2px rgba(99, 102, 241, 0.12);
+  border-color: var(--gold);
+  box-shadow: 0 0 0 2px var(--gold-dim);
 }
 .char-suggest {
   margin-top: 8px;
   font-size: 12px;
-  color: #6b7280;
+  color: var(--text-2);
 }
-.char-suggest em { color: #4f46e5; font-style: normal; font-weight: 500; }
+.char-suggest em { color: var(--gold-bright); font-style: normal; font-weight: 500; }
 
 /* ==================== Step 3：视频预览 ==================== */
 .video-wrap {
@@ -988,6 +1211,7 @@ onBeforeUnmount(() => {
   background: #000;
   border-radius: 10px;
   overflow: hidden;
+  border: 1px solid var(--line);
 }
 .preview-video {
   width: 100%;
@@ -1002,27 +1226,27 @@ onBeforeUnmount(() => {
   gap: 14px;
 }
 .meta-item {
-  background: #f9fafb;
-  border: 1px solid #e5e7eb;
+  background: var(--bg-3);
+  border: 1px solid var(--line);
   border-radius: 8px;
   padding: 10px 14px;
 }
 .meta-key {
   display: block;
   font-size: 12px;
-  color: #6b7280;
+  color: var(--text-2);
   margin-bottom: 4px;
 }
 .meta-val {
   font-size: 15px;
   font-weight: 600;
-  color: #111827;
+  color: var(--text-0);
 }
 
 /* ==================== Step 4：最终发布 ==================== */
 .final-meta {
-  background: #f9fafb;
-  border: 1px solid #e5e7eb;
+  background: var(--bg-3);
+  border: 1px solid var(--line);
   border-radius: 10px;
   padding: 18px 22px;
   margin-bottom: 22px;
@@ -1032,17 +1256,17 @@ onBeforeUnmount(() => {
   justify-content: space-between;
   align-items: center;
   padding: 9px 0;
-  border-bottom: 1px dashed #e5e7eb;
+  border-bottom: 1px dashed var(--line);
 }
 .final-meta-row:last-child { border-bottom: none; }
 .final-key {
   font-size: 13px;
-  color: #6b7280;
+  color: var(--text-2);
   font-weight: 500;
 }
 .final-val {
   font-size: 14px;
-  color: #111827;
+  color: var(--text-0);
   font-weight: 600;
 }
 .final-buttons {
@@ -1075,22 +1299,23 @@ onBeforeUnmount(() => {
 .big-btn-sub { font-size: 12.5px; opacity: 0.85; }
 
 .big-btn-ghost {
-  background: #fff;
-  color: #4f46e5;
-  border: 2px solid #c7d2fe;
-  box-shadow: 0 1px 3px rgba(79, 70, 229, 0.06);
+  background: var(--bg-2);
+  color: var(--gold-bright);
+  border: 2px solid var(--gold-dim);
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.2);
 }
 .big-btn-ghost:hover {
-  border-color: #4f46e5;
-  box-shadow: 0 4px 14px rgba(79, 70, 229, 0.15);
+  border-color: var(--gold);
+  box-shadow: 0 4px 14px rgba(217, 169, 78, 0.15);
 }
 .big-btn-primary {
-  background: linear-gradient(135deg, #6366f1, #4f46e5);
-  color: #fff;
-  box-shadow: 0 4px 14px rgba(79, 70, 229, 0.3);
+  background: linear-gradient(135deg, #d9a94e, #b9842f);
+  color: #1a1408;
+  box-shadow: 0 4px 14px rgba(217, 169, 78, 0.3);
 }
 .big-btn-primary:hover {
-  box-shadow: 0 6px 20px rgba(79, 70, 229, 0.4);
+  filter: brightness(1.08);
+  box-shadow: 0 6px 20px rgba(217, 169, 78, 0.4);
 }
 
 /* ==================== 底部操作栏 ==================== */
@@ -1104,37 +1329,136 @@ onBeforeUnmount(() => {
 .action-btn {
   padding: 10px 22px;
   border-radius: 8px;
-  border: none;
+  border: 1px solid var(--line-strong);
   font-size: 14px;
   font-weight: 600;
   cursor: pointer;
-  transition: background 0.15s, opacity 0.15s;
+  transition: background 0.15s, opacity 0.15s, border-color 0.15s;
+  font-family: var(--font-body);
 }
 .action-btn:disabled {
   opacity: 0.45;
   cursor: not-allowed;
 }
 .action-prev {
-  background: #fff;
-  color: #4b5563;
-  border: 1px solid #d1d5db;
+  background: var(--bg-2);
+  color: var(--text-1);
+  border: 1px solid var(--line-strong);
 }
 .action-prev:hover:not(:disabled) {
-  background: #f3f4f6;
+  background: var(--bg-3);
+  color: var(--text-0);
 }
 .action-next {
-  background: #4f46e5;
-  color: #fff;
+  background: linear-gradient(135deg, #d9a94e, #b9842f);
+  border-color: transparent;
+  color: #1a1408;
+  box-shadow: 0 4px 14px rgba(217, 169, 78, 0.25);
 }
 .action-next:hover:not(:disabled) {
-  background: #4338ca;
+  filter: brightness(1.08);
+  color: #1a1408;
 }
 .action-center {
   font-size: 13px;
-  color: #6b7280;
+  color: var(--text-2);
 }
-.status-text { color: #6b7280; }
-.error-text { color: #dc2626; font-weight: 500; }
+.status-text { color: var(--text-2); }
+.error-text { color: var(--red); font-weight: 500; }
+.review-tag {
+  color: var(--gold-bright);
+  background: var(--gold-dim);
+  padding: 3px 10px;
+  border-radius: 6px;
+  font-weight: 500;
+}
+.action-right {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+.action-reject {
+  background: transparent;
+  color: var(--red, #e05b5b);
+  border: 1px solid var(--red, #e05b5b);
+}
+.action-reject:hover:not(:disabled) {
+  background: rgba(224, 91, 91, 0.1);
+  color: var(--red, #e05b5b);
+}
+
+/* ==================== 真实创作运行栏 ==================== */
+.runbar {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+  background: var(--bg-2);
+  border: 1px solid var(--line);
+  border-radius: 14px;
+  padding: 12px 14px;
+  margin-bottom: 28px;
+  box-shadow: 0 2px 10px rgba(0, 0, 0, 0.2);
+}
+.runbar-input {
+  flex: 1;
+  min-width: 220px;
+  padding: 9px 12px;
+  border: 1px solid var(--line-strong);
+  border-radius: 8px;
+  font-size: 13.5px;
+  background: var(--bg-1);
+  color: var(--text-0);
+  outline: none;
+  font-family: var(--font-body);
+}
+.runbar-input::placeholder { color: var(--text-2); }
+.runbar-input:focus { border-color: var(--gold); box-shadow: 0 0 0 3px var(--gold-dim); }
+.runbar-select {
+  padding: 9px 10px;
+  border: 1px solid var(--line-strong);
+  border-radius: 8px;
+  font-size: 13px;
+  background: var(--bg-1);
+  color: var(--text-0);
+  max-width: 150px;
+  font-family: var(--font-body);
+}
+.runbar-select:focus { outline: none; border-color: var(--gold); }
+.runbar-btn {
+  padding: 9px 16px;
+  border: none;
+  border-radius: 8px;
+  background: linear-gradient(135deg, #d9a94e, #b9842f);
+  color: #1a1408;
+  font-size: 13.5px;
+  font-weight: 600;
+  cursor: pointer;
+  white-space: nowrap;
+  font-family: var(--font-body);
+}
+.runbar-btn:hover { filter: brightness(1.08); color: #1a1408; }
+.runbar-ghost {
+  padding: 8px 12px;
+  border: 1px solid var(--line-strong);
+  border-radius: 8px;
+  background: var(--bg-2);
+  color: var(--text-1);
+  font-size: 13px;
+  cursor: pointer;
+  white-space: nowrap;
+  font-family: var(--font-body);
+}
+.runbar-ghost:hover { background: var(--bg-3); color: var(--text-0); }
+.real-tag {
+  display: inline-block;
+  padding: 4px 10px;
+  border-radius: 999px;
+  background: var(--gold-dim);
+  color: var(--gold-bright);
+  font-size: 12px;
+  font-weight: 600;
+}
 
 /* ==================== 响应式：窄屏友好 ==================== */
 @media (max-width: 720px) {

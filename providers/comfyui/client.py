@@ -131,9 +131,17 @@ class ComfyUIClient:
         sampler: str = "euler",
         scheduler: str = "normal",
         batch_size: int = 1,
+        loras: Optional[List[Dict[str, Any]]] = None,
     ) -> dict:
-        """构建标准文生图工作流（KSampler + SD）"""
-        return {
+        """构建标准文生图工作流（KSampler + SD），可选叠加风格 LoRA。
+
+        :param loras: 风格 LoRA 列表，元素形如
+            {"name": "SD1.5/GuoFeng3.2_Lora.safetensors",
+             "strength_model": 0.7, "strength_clip": 0.7}
+            按顺序用 LoraLoader 链式叠加到 checkpoint 的 MODEL/CLIP 上；
+            为空则不挂任何 LoRA（与旧行为一致）。
+        """
+        wf = {
             "3": {
                 "class_type": "KSampler",
                 "inputs": {
@@ -175,6 +183,37 @@ class ComfyUIClient:
             },
         }
 
+        # 叠加风格 LoRA：LoraLoader 依次串联，前一个的输出接后一个的输入，
+        # 最后把 KSampler.model 与两个 CLIPTextEncode.clip 指向链尾。
+        if loras:
+            prev_model: List[Any] = ["4", 0]
+            prev_clip: List[Any] = ["4", 1]
+            node_id = 10
+            for lora in loras:
+                name = lora.get("name")
+                if not name:
+                    continue
+                strength = float(lora.get("strength_model", lora.get("strength", 0.8)))
+                nid = str(node_id)
+                wf[nid] = {
+                    "class_type": "LoraLoader",
+                    "inputs": {
+                        "lora_name": name,
+                        "strength_model": strength,
+                        "strength_clip": float(lora.get("strength_clip", strength)),
+                        "model": prev_model,
+                        "clip": prev_clip,
+                    },
+                }
+                prev_model = [nid, 0]
+                prev_clip = [nid, 1]
+                node_id += 1
+            wf["3"]["inputs"]["model"] = prev_model
+            wf["6"]["inputs"]["clip"] = prev_clip
+            wf["7"]["inputs"]["clip"] = prev_clip
+
+        return wf
+
     @staticmethod
     def build_flux_txt2img_workflow(
         unet_name: str = "flux1-schnell-Q5_K_S.gguf",
@@ -191,6 +230,7 @@ class ComfyUIClient:
         sampler: str = "euler",
         scheduler: str = "simple",
         batch_size: int = 1,
+        loras: Optional[List[Dict[str, Any]]] = None,
     ) -> dict:
         """构建 FLUX.1 文生图工作流（UNET + DualCLIP + VAE）
 
@@ -201,8 +241,14 @@ class ComfyUIClient:
 
         FLUX-schnell 建议 steps≈4、cfg≈1.0、sampler=euler、scheduler=simple；
         负面词通过 ConditioningZeroOut 零化（不用负面提示词）。
+
+        :param loras: 风格 LoRA 列表，元素形如
+            {"name": "FLUX/xxx.safetensors", "strength_model": 0.8}
+            FLUX LoRA 只训练了 UNet（text_encoder_lr=0），故用 LoraLoaderModelOnly
+            链式叠加到 UNET 的 MODEL 上，CLIP 仍直接取 DualCLIPLoader；
+            为空则不挂任何 LoRA（与旧行为一致）。
         """
-        return {
+        wf = {
             "3": {
                 "class_type": "KSampler",
                 "inputs": {
@@ -261,6 +307,31 @@ class ComfyUIClient:
             },
         }
 
+        # 叠加 FLUX 风格 LoRA：LoraLoaderModelOnly 依次串联（只改 MODEL、不动 CLIP），
+        # 最后把 KSampler.model 指向链尾。
+        if loras:
+            prev_model: List[Any] = ["4", 0]
+            node_id = 20
+            for lora in loras:
+                name = lora.get("name")
+                if not name:
+                    continue
+                strength = float(lora.get("strength_model", lora.get("strength", 0.8)))
+                nid = str(node_id)
+                wf[nid] = {
+                    "class_type": "LoraLoaderModelOnly",
+                    "inputs": {
+                        "lora_name": name,
+                        "strength_model": strength,
+                        "model": prev_model,
+                    },
+                }
+                prev_model = [nid, 0]
+                node_id += 1
+            wf["3"]["inputs"]["model"] = prev_model
+
+        return wf
+
     @staticmethod
     def build_controlnet_workflow(
         ckpt_name: str,
@@ -275,10 +346,17 @@ class ComfyUIClient:
         cfg: float = 7.5,
         controlnet_strength: float = 0.75,
         batch_size: int = 1,
+        preprocessor: str = "",
     ) -> dict:
-        """构建带 ControlNet 的文生图工作流"""
-        ctrl_name_clean = controlnet_name.replace(".pth", "").replace(".safetensors", "")
-        return {
+        """构建带 ControlNet 的文生图工作流。
+
+        :param controlnet_name: ControlNet 模型文件名，须与 ComfyUI 里
+            ControlNetLoader 列出的名字完全一致（含扩展名），不做任何改写。
+        :param preprocessor: 预处理方式。"canny" 时在 LoadImage 后插入 Canny 节点
+            自动提线稿（工作流自包含，无需事先准备线稿）；空串则把 LoadImage
+            的图直接作为控制图。
+        """
+        wf = {
             "3": {"class_type": "KSampler", "inputs": {
                 "seed": seed, "steps": steps, "cfg": cfg,
                 "sampler_name": "euler", "scheduler": "normal", "denoise": 1.0,
@@ -289,7 +367,7 @@ class ComfyUIClient:
             "5": {"class_type": "EmptyLatentImage", "inputs": {"width": width, "height": height, "batch_size": batch_size}},
             "6": {"class_type": "LoadImage", "inputs": {"image": controlnet_image}},
             "7": {"class_type": "CLIPTextEncode", "inputs": {"text": negative_prompt, "clip": ["4", 1]}},
-            "8": {"class_type": "ControlNetLoader", "inputs": {"control_net_name": ctrl_name_clean}},
+            "8": {"class_type": "ControlNetLoader", "inputs": {"control_net_name": controlnet_name}},
             "9": {"class_type": "ControlNetApply", "inputs": {
                 "strength": controlnet_strength,
                 "conditioning": ["10", 0],
@@ -300,6 +378,12 @@ class ComfyUIClient:
             "11": {"class_type": "VAEDecode", "inputs": {"samples": ["3", 0], "vae": ["4", 2]}},
             "12": {"class_type": "SaveImage", "inputs": {"filename_prefix": "ctrl_output", "images": ["11", 0]}},
         }
+        if preprocessor == "canny":
+            wf["13"] = {"class_type": "Canny", "inputs": {
+                "image": ["6", 0], "low_threshold": 0.4, "high_threshold": 0.8,
+            }}
+            wf["9"]["inputs"]["image"] = ["13", 0]
+        return wf
 
     @staticmethod
     def build_ipadapter_workflow(
@@ -307,7 +391,7 @@ class ComfyUIClient:
         prompt: str,
         negative_prompt: str = "",
         ref_image: str = "",
-        ipadapter_model: str = "ip-adapter-plus-face.safetensors",
+        preset: str = "PLUS (high strength)",
         width: int = 512,
         height: int = 512,
         seed: int = 42,
@@ -316,30 +400,87 @@ class ComfyUIClient:
         ipadapter_weight: float = 0.7,
         batch_size: int = 1,
     ) -> dict:
-        """构建 IP-Adapter 角色锁定工作流"""
+        """构建 IP-Adapter 角色锁定工作流。
+
+        :param preset: IPAdapterUnifiedLoader 的预设名，决定用哪套 IP-Adapter 模型
+            （会自动从 models/ipadapter 与 models/clip_vision 里挑匹配的文件）。
+            常用值 "PLUS (high strength)" / "PLUS FACE (portraits)"。
+        """
         return {
             "3": {"class_type": "KSampler", "inputs": {
                 "seed": seed, "steps": steps, "cfg": cfg,
                 "sampler_name": "euler", "scheduler": "normal", "denoise": 1.0,
-                "model": ["13", 0], "positive": ["12", 0], "negative": ["7", 0],
+                "model": ["12", 0], "positive": ["13", 0], "negative": ["7", 0],
                 "latent_image": ["5", 0],
             }},
             "4": {"class_type": "CheckpointLoaderSimple", "inputs": {"ckpt_name": ckpt_name}},
             "5": {"class_type": "EmptyLatentImage", "inputs": {"width": width, "height": height, "batch_size": batch_size}},
             "6": {"class_type": "LoadImage", "inputs": {"image": ref_image}},
             "7": {"class_type": "CLIPTextEncode", "inputs": {"text": negative_prompt, "clip": ["4", 1]}},
-            "8": {"class_type": "IPAdapterModelLoader", "inputs": {"ipadapter_file": ipadapter_model}},
-            "9": {"class_type": "CLIPVisionLoader", "inputs": {"clip_name": "CLIP-ViT-H-14-laion2B-s32B-b79K.safetensors"}},
-            "10": {"class_type": "CLIPVisionEncode", "inputs": {"clip_vision": ["9", 0], "image": ["6", 0]}},
-            "11": {"class_type": "IPAdapterUnifiedLoader", "inputs": {"preset": "PLUS", "model": ["4", 0]}},
+            "11": {"class_type": "IPAdapterUnifiedLoader", "inputs": {"preset": preset, "model": ["4", 0]}},
             "12": {"class_type": "IPAdapter", "inputs": {
-                "model": ["11", 0], "ipadapter": ["8", 0], "image": ["10", 0],
+                "model": ["11", 0], "ipadapter": ["11", 1], "image": ["6", 0],
                 "weight": ipadapter_weight, "start_at": 0.0, "end_at": 1.0,
-                "weight_type": "original",
+                "weight_type": "standard",
             }},
             "13": {"class_type": "CLIPTextEncode", "inputs": {"text": prompt, "clip": ["4", 1]}},
             "14": {"class_type": "VAEDecode", "inputs": {"samples": ["3", 0], "vae": ["4", 2]}},
             "15": {"class_type": "SaveImage", "inputs": {"filename_prefix": "ipadapter_output", "images": ["14", 0]}},
+        }
+
+    @staticmethod
+    def build_ipadapter_faceid_workflow(
+        ckpt_name: str,
+        prompt: str,
+        negative_prompt: str = "",
+        ref_image: str = "",
+        preset: str = "FACEID PLUS V2",
+        lora_strength: float = 0.6,
+        provider: str = "CPU",
+        width: int = 512,
+        height: int = 512,
+        seed: int = 42,
+        steps: int = 12,
+        cfg: float = 7.5,
+        weight: float = 1.0,
+        weight_faceidv2: float = 1.0,
+        batch_size: int = 1,
+    ) -> dict:
+        """构建 IP-Adapter FaceID 角色锁定工作流（SD1.5）。
+
+        与 build_ipadapter_workflow 的区别：走 IPAdapterUnifiedLoaderFaceID +
+        IPAdapterFaceID，会额外加载 insightface 人脸特征与配套 FaceID LoRA，
+        因此人物脸部一致性更强。
+
+        :param preset: FACEID 系列预设，"FACEID" / "FACEID PLUS - SD1.5 only" /
+            "FACEID PLUS V2" / "FACEID PORTRAIT (style transfer)"。
+        :param lora_strength: FaceID 配套 LoRA 强度，0 表示不加载 LoRA。
+        :param provider: insightface 推理后端，Mac 上用 "CPU"。
+        """
+        return {
+            "3": {"class_type": "KSampler", "inputs": {
+                "seed": seed, "steps": steps, "cfg": cfg,
+                "sampler_name": "euler", "scheduler": "normal", "denoise": 1.0,
+                "model": ["12", 0], "positive": ["13", 0], "negative": ["7", 0],
+                "latent_image": ["5", 0],
+            }},
+            "4": {"class_type": "CheckpointLoaderSimple", "inputs": {"ckpt_name": ckpt_name}},
+            "5": {"class_type": "EmptyLatentImage", "inputs": {"width": width, "height": height, "batch_size": batch_size}},
+            "6": {"class_type": "LoadImage", "inputs": {"image": ref_image}},
+            "7": {"class_type": "CLIPTextEncode", "inputs": {"text": negative_prompt, "clip": ["4", 1]}},
+            "11": {"class_type": "IPAdapterUnifiedLoaderFaceID", "inputs": {
+                "preset": preset, "lora_strength": lora_strength,
+                "provider": provider, "model": ["4", 0],
+            }},
+            "12": {"class_type": "IPAdapterFaceID", "inputs": {
+                "model": ["11", 0], "ipadapter": ["11", 1], "image": ["6", 0],
+                "weight": weight, "weight_faceidv2": weight_faceidv2,
+                "weight_type": "linear", "combine_embeds": "concat",
+                "start_at": 0.0, "end_at": 1.0, "embeds_scaling": "V only",
+            }},
+            "13": {"class_type": "CLIPTextEncode", "inputs": {"text": prompt, "clip": ["4", 1]}},
+            "14": {"class_type": "VAEDecode", "inputs": {"samples": ["3", 0], "vae": ["4", 2]}},
+            "15": {"class_type": "SaveImage", "inputs": {"filename_prefix": "ipadapter_faceid_output", "images": ["14", 0]}},
         }
 
     # ── 同步等待执行完成 ──────────────────────
@@ -419,7 +560,7 @@ class ComfyUIClient:
     @staticmethod
     def txt2img_sync(
         host: str = "127.0.0.1",
-        port: int = 8188,
+        port: int = 8189,
         ckpt_name: str = "Realistic-Vision-V5.1.safetensors",
         prompt: str = "a cute cat",
         negative_prompt: str = "",

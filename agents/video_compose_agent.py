@@ -4,7 +4,7 @@
 
 v2（电影化后期）：
 - xfade 交叉淡化转场（替代硬切）
-- 可选 Real-ESRGAN 超分（512→高清，需 tools/realesrgan）
+- 超分增强（`AIGC_SUPER_RES=1` 默认开：Lanczos 2x 放大 + 锐化，见 `_super_resolve`）
 - 暖调色 + 胶片颗粒 + 2.35:1 遮幅
 - 字幕烧录
 """
@@ -20,14 +20,69 @@ from agents.base import Agent, AgentResult
 
 logger = logging.getLogger(__name__)
 
+# xfade 交叉淡化转场时长（秒）。非末段要多留这么久和下一段重叠，video_agent
+# 按"分镜时长 + 本值"决定生成帧数，改这里两边会自动对齐。
+XFADE_TRANSITION = 1.0
+
 # 电影化滤镜参数（暖调 + 胶片颗粒 + 遮幅黑边）
-FADE = 0.4  # 转场时长（秒）
 CINEMATIC_FILTER = (
     "eq=contrast=1.06:saturation=1.15:gamma=0.94:brightness=0.005,"
     "noise=alls=5:allf=t,"
     "drawbox=y=0:w=iw:h=ih*0.07:color=black:t=fill,"
     "drawbox=y=ih*0.93:w=iw:h=ih*0.07:color=black:t=fill"
 )
+
+
+def _probe_duration(path, stream: str = "v:0") -> float:
+    """读取指定流（"v:0" 视频 / "a:0" 音频）的时长（秒），而不是容器时长。
+
+    LTX 等 provider 的输出自带 AAC 音轨，容器时长(format=duration)通常比视频流长约
+    0.2~0.3s。若拿容器时长当视频变速基准，算出的倍率偏小，每段会被裁短，xfade 处就会
+    露出上一段的冻结末帧；同理音频变速必须用音频流自己的时长做基准。依次尝试：
+      1) stream=duration（最准）
+      2) nb_frames / avg_frame_rate（仅视频流，无 duration 元数据时）
+      3) format=duration（兜底）
+    """
+    def _ffprobe(entries: str, use_stream: bool) -> str:
+        cmd = ["ffprobe", "-v", "quiet"]
+        if use_stream:
+            cmd += ["-select_streams", stream]
+        cmd += ["-show_entries", entries, "-of", "csv=p=0", str(path)]
+        try:
+            r = sp.run(cmd, capture_output=True, text=True, timeout=15)
+        except Exception:
+            return ""
+        return (r.stdout or "").strip()
+
+    raw = _ffprobe("stream=duration", True)
+    try:
+        v = float(raw.splitlines()[0])
+        if v > 0.1:
+            return v
+    except (ValueError, IndexError):
+        pass
+
+    if stream.startswith("v"):
+        lines = _ffprobe("stream=nb_frames,avg_frame_rate", True).splitlines()
+        if len(lines) >= 2 and lines[0] not in ("", "N/A"):
+            try:
+                num, _, den = lines[1].partition("/")
+                fps = float(num) / float(den) if float(den) else 0.0
+                if float(lines[0]) > 0 and fps > 0:
+                    return float(lines[0]) / fps
+            except (ValueError, ZeroDivisionError):
+                pass
+
+    raw = _ffprobe("format=duration", False)
+    try:
+        v = float(raw.splitlines()[0])
+        if v > 0.1:
+            return v
+    except (ValueError, IndexError):
+        pass
+
+    # 兜底：读不到时默认按 5 秒估算，保证命令能构造出来
+    return 5.0
 
 
 class VideoComposeAgent(Agent):
@@ -40,9 +95,27 @@ class VideoComposeAgent(Agent):
         self.ffmpeg = ffmpeg_path
         # 超分工具（FFmpeg lanczos 2x 放大 + 锐化，替代不兼容的 realesrgan）
         self.use_super_res = os.environ.get("AIGC_SUPER_RES", "1") == "1"
+        # colorgrade 滤镜 FFmpeg 6.0+ 才有；本机 9.0 也未必编译。启动探测一次，
+        # 不支持就全程走 eq 回退，避免每集合成都要先白失败一轮才降级。
+        self.use_colorgrade = self._ffmpeg_has_filter("colorgrade")
+        if not self.use_colorgrade:
+            logger.info("[VideoComposeAgent] FFmpeg 无 colorgrade，调色用 eq 等效参数")
+
+    @staticmethod
+    def _ffmpeg_has_filter(name: str) -> bool:
+        """探测本机 ffmpeg 是否支持某个滤镜（如 colorgrade）。"""
+        try:
+            r = sp.run(
+                ["ffmpeg", "-hide_banner", "-filters"],
+                capture_output=True, text=True, timeout=10,
+            )
+            return f" {name} " in f" {r.stdout} " or f"\n{name}" in r.stdout
+        except Exception:
+            return False
 
     async def run(self, videos_result, subtitle_result,
-                  output_dir: str = "storage/output") -> AgentResult:
+                  output_dir: str = "storage/output",
+                  storyboard_result=None) -> AgentResult:
         logger.info("[VideoComposeAgent] 合成视频")
 
         def _get_data(obj):
@@ -52,6 +125,9 @@ class VideoComposeAgent(Agent):
 
         videos = _get_data(videos_result).get("videos", {})
         subs = _get_data(subtitle_result).get("subtitles", [])
+        # 分镜每镜时长：{episode_number: {shot_id: duration}}。
+        # 成片按此拉伸/补齐，保证镜头时长与分镜（及 SRT）时间轴一致。
+        shot_durations = self._shot_durations(_get_data(storyboard_result))
         output_path = Path(output_dir)
         output_path.mkdir(parents=True, exist_ok=True)
 
@@ -69,6 +145,8 @@ class VideoComposeAgent(Agent):
 
             concat_file = output_path / f"concat_ep{ep_num}.txt"
             video_paths = []
+            target_durations = []  # 与 video_paths 一一对应的分镜目标时长（秒）
+            ep_shot_durs = shot_durations.get(str(ep_num), {})
             sorted_shots = sorted(
                 ep_videos.items(),
                 key=lambda x: int(x[0]) if x[0].isdigit() else 0,
@@ -82,6 +160,7 @@ class VideoComposeAgent(Agent):
                     path = str(video_info)
                 if path and Path(path).exists():
                     video_paths.append(path)
+                    target_durations.append(ep_shot_durs.get(str(shot_id)))
 
             if not video_paths:
                 logger.warning(f"[VideoComposeAgent] ep_{ep_num} 无可用视频文件")
@@ -97,7 +176,7 @@ class VideoComposeAgent(Agent):
 
             if is_mock:
                 # mock 模式：直接用纯色视频兜底（cmd 仅在 mock 分支定义并执行）
-                duration = len(video_paths) * 5
+                duration = sum(t for t in target_durations if t) or len(video_paths) * 5
                 cmd = [
                     self.ffmpeg, "-f", "lavfi",
                     "-i", f"color=c=0x1a1a2e:s=1920x1080:d={duration}:r=24",
@@ -112,22 +191,43 @@ class VideoComposeAgent(Agent):
                     logger.error(f"[VideoComposeAgent] mock FFmpeg 失败: {e.stderr}")
                     continue
             else:
-                # 真实视频：增强版合成（xfade 转场 + 调色 + 音频压限 + 字幕 一步到位）
+                # 真实视频：增强版合成（xfade 转场 + 调色 + 音频压限）
                 has_srt = Path(srt_path).exists() and Path(srt_path).stat().st_size > 0
                 sub_path = srt_path if has_srt else None
                 # 后续 pipeline 支持 BGM 时，把实际 bgm_path 传进来（当前占位 None）
                 ok = await asyncio.to_thread(
-                    self._compose_final, video_paths, sub_path, None, str(final_path)
+                    self._compose_final, video_paths, sub_path, None, str(final_path),
+                    target_durations,
                 )
                 if not ok:
                     logger.error("[VideoComposeAgent] 增强合成失败，跳过本集")
                     continue
+                # 超分增强（AIGC_SUPER_RES=1 时启用）：放在烧字幕之前——字幕 PNG 按
+                # 成片分辨率渲染后叠加，才不会被放大/颗粒二次处理糊掉文字。
+                if self.use_super_res:
+                    await asyncio.to_thread(self._super_resolve, str(final_path))
+                # 字幕单独烧录：本机 ffmpeg 无 libass，不能走 subtitles 滤镜，
+                # 增强滤镜链已不烧字幕；这里用 PIL 生成字幕 PNG + overlay 叠加。
+                # 注意 _burn_subtitles 输入/输出不能同路径（ffmpeg 会自覆盖报错），
+                # 先烧到临时文件，成功后再原子替换成片。
+                if sub_path:
+                    tmp_burned = output_path / f"ep_{ep_num}_sub_tmp.mp4"
+                    burned = await asyncio.to_thread(
+                        self._burn_subtitles, str(final_path), sub_path, str(tmp_burned)
+                    )
+                    if burned:
+                        tmp_burned.replace(final_path)
+                        has_sub = True
+                    else:
+                        tmp_burned.unlink(missing_ok=True)
+                        logger.warning("[VideoComposeAgent] PIL 字幕烧录失败，保留无字幕成片")
+                        has_sub = False
+                else:
+                    has_sub = False
 
             final_used = str(final_path)
-            # 字幕已在增强滤镜中烧录；若走了兜底 concat，可能无字幕（保证先出片）
-            has_sub = Path(srt_path).exists() and not is_mock
             if has_sub:
-                logger.info(f"[VideoComposeAgent] 合成完成（字幕已在滤镜中烧录）: {final_path}")
+                logger.info(f"[VideoComposeAgent] 合成完成（含烧录字幕）: {final_path}")
             else:
                 logger.info(f"[VideoComposeAgent] 合成完成（无字幕）: {final_path}")
 
@@ -150,6 +250,40 @@ class VideoComposeAgent(Agent):
         return result
 
     @staticmethod
+    def _shot_durations(storyboard: dict | None) -> dict[str, dict[str, float]]:
+        """从分镜结果提取 {episode_number(str): {shot_id(str): duration}}。
+
+        兼容传入的是 AgentResult.data 内层，或整包 dict。
+        """
+        out: dict[str, dict[str, float]] = {}
+        if not isinstance(storyboard, dict):
+            return out
+        data = storyboard.get("data", storyboard) or {}
+        for ep in data.get("episodes", []) or []:
+            per: dict[str, float] = {}
+            for shot in ep.get("shots", []) or []:
+                try:
+                    per[str(shot.get("shot_id"))] = float(shot.get("duration") or 0)
+                except (TypeError, ValueError):
+                    continue
+            out[str(ep.get("episode_number", 1))] = per
+        return out
+
+    @staticmethod
+    def _atempo_chain(factor: float) -> list[str]:
+        """把变速系数拆成若干 0.5~2.0 的 atempo 串联（单次 atempo 有范围限制）。"""
+        steps: list[str] = []
+        f = factor
+        while f > 2.0:
+            steps.append("atempo=2.0")
+            f /= 2.0
+        while f < 0.5:
+            steps.append("atempo=0.5")
+            f /= 0.5
+        steps.append(f"atempo={f:.4f}")
+        return steps
+
+    @staticmethod
     def _has_audio_stream(path: str) -> bool:
         """判断该视频文件是否自带音轨（如 MiniMax H3 全模态生成的原生音频）。
 
@@ -165,128 +299,36 @@ class VideoComposeAgent(Agent):
         except Exception:
             return False
 
-    # ── 电影化合成（xfade 转场 + 超分 + 调色/颗粒/遮幅）───
-    def _cinematic_compose(self, video_paths: list, output_path: str) -> bool:
-        """把多段视频用交叉淡化转场拼接，再叠加电影化滤镜
+    def _super_resolve(self, base_path: str) -> bool:
+        """超分增强：Lanczos 2x 放大 + unsharp 锐化 + 电影化滤镜，原地替换成片。
 
-        流程：各段 setpts 归零 → xfade 链拼接 → 调色+颗粒+遮幅
-        →（可选）Real-ESRGAN 超分 → 高清后再加一次滤镜
-
-        音轨：若输入视频自带音轨（如 MiniMax H3 全模态生成的原生音频），
-        用 acrossfade 按与视频 xfade 相同时长交叉，保证 A/V 同步并保留音频。
-        无声视频（如 LTX）则维持原有「仅出画面」逻辑，由 audio_agent 后期配音。
+        倍率用 iw*2:ih*2 而不是固定尺寸：出片是竖屏（LTX 默认 576x1024），写死尺寸
+        会把画面拉成方块。放大/锐化/调色合并成一次编码（原来分两次），少一次中间
+        文件、少一代画质损失。失败时保留原成片不动。
         """
+        base = Path(base_path)
+        tmp = base.with_name(base.stem + "_sr.mp4")
         try:
-            n = len(video_paths)
-            # 读取每段时长（用于计算 xfade offset）
-            durations = []
-            for vp in video_paths:
-                r = sp.run(
-                    ["ffprobe", "-v", "quiet",
-                     "-show_entries", "format=duration", "-of", "csv=p=0", str(vp)],
-                    capture_output=True, text=True, timeout=15,
-                )
-                durations.append(float(r.stdout.strip()))
-
-            # 构建 xfade 滤镜链：每段归零起点，再两两交叉淡化
-            # 第 i 个 xfade 的左输入是上一个 xfade 的输出（vx{i-1}），第一个用 v0
-            fc = [f"[{i}:v]setpts=PTS-STARTPTS[v{i}]" for i in range(n)]
-            total_before = 0
-            last = "v0"
-            for i in range(1, n):
-                total_before += durations[i - 1]
-                off = total_before - i * FADE
-                in_left = "v0" if i == 1 else f"vx{i-1}"
-                fc.append(f"[{in_left}][v{i}]xfade=transition=fade:duration={FADE}:offset={off:.3f}[vx{i}]")
-                last = f"vx{i}"
-            fc.append(f"[{last}]{CINEMATIC_FILTER}[vout]")
-
-            # 音轨处理：全部输入都带音频时，用 acrossfade 拼接（时长与 xfade 一致）
-            has_audio = all(self._has_audio_stream(vp) for vp in video_paths)
-            audio_out = None
-            if has_audio:
-                for i in range(n):
-                    fc.append(
-                        f"[{i}:a]aformat=sample_rates=44100:channel_layouts=stereo,"
-                        f"asetpts=PTS-STARTPTS[a{i}]"
-                    )
-                prev_a = "a0"
-                if n == 1:
-                    audio_out = "a0"
-                else:
-                    for i in range(1, n):
-                        out = f"au{i}"
-                        fc.append(
-                            f"[{prev_a}][a{i}]acrossfade=d={FADE}:c1=tri:c2=tri[{out}]"
-                        )
-                        prev_a = out
-                    audio_out = prev_a
-
-            inputs = []
-            for vp in video_paths:
-                inputs += ["-i", str(vp)]
-            if audio_out:
-                cmd = ([self.ffmpeg, "-y"] + inputs +
-                       ["-filter_complex", ";".join(fc),
-                        "-map", "[vout]", "-map", f"[{audio_out}]",
-                        "-c:v", "libx264", "-preset", "fast", "-crf", "20",
-                        "-c:a", "aac", "-b:a", "192k",
-                        "-pix_fmt", "yuv420p", "-r", "25", str(output_path)])
-            else:
-                cmd = ([self.ffmpeg, "-y"] + inputs +
-                       ["-filter_complex", ";".join(fc), "-map", "[vout]",
-                        "-c:v", "libx264", "-preset", "fast", "-crf", "20",
-                        "-pix_fmt", "yuv420p", "-r", "25", str(output_path)])
-            r = sp.run(cmd, capture_output=True, text=True, timeout=600)
-            if not Path(output_path).exists() or Path(output_path).stat().st_size == 0:
-                logger.warning(f"[VideoComposeAgent] xfade 失败: {r.stderr[-300:]}")
-                return False
-
-            # 超分增强（可选，需 tools/realesrgan）
-            if self.use_super_res:
-                self._super_resolve(output_path)
-            return True
-        except Exception as e:
-            logger.error(f"[VideoComposeAgent] 合成异常: {e}")
-            return False
-
-    def _super_resolve(self, base_path: str):
-        """超分增强：Lanczos 放大 2x + 轻锐化 → 重新加滤镜 → 替换成片
-
-        512→1024 提升清晰度；之后再加一次电影化滤镜（颗粒在高清下更自然）。
-        """
-        try:
-            base = Path(base_path)
-            hd_path = str(base.with_name(base.stem + "_hd.mp4"))
-            # Lanczos 高质量放大 + unsharp 锐化（比直接放大清晰得多）
             cmd = [self.ffmpeg, "-y", "-i", base_path,
                    "-filter_complex",
-                   "scale=1024:1024:flags=lanczos,unsharp=5:5:0.6:5:5:0.0[v]",
+                   f"[0:v]scale=iw*2:ih*2:flags=lanczos,"
+                   f"unsharp=5:5:0.6:5:5:0.0,{CINEMATIC_FILTER}[v]",
                    "-map", "[v]", "-map", "0:a?",
                    "-c:v", "libx264", "-preset", "fast", "-crf", "18",
                    "-c:a", "aac", "-b:a", "192k",
-                   "-pix_fmt", "yuv420p", "-r", "25", hd_path]
-            r = sp.run(cmd, capture_output=True, text=True, timeout=900)
-            if not Path(hd_path).exists() or Path(hd_path).stat().st_size == 0:
-                logger.warning(f"[VideoComposeAgent] 超分失败: {r.stderr[-300:]}")
-                return
-            # 超分后再次加电影化滤镜（颗粒在高清下更自然）
-            final = str(base.with_name(base.stem + "_sr.mp4"))
-            cmd2 = [self.ffmpeg, "-y", "-i", hd_path,
-                    "-filter_complex", f"[0:v]{CINEMATIC_FILTER}[vout]",
-                    "-map", "[vout]", "-map", "0:a?",
-                    "-c:v", "libx264", "-preset", "fast",
-                    "-c:a", "aac", "-b:a", "192k",
-                    "-crf", "18", "-pix_fmt", "yuv420p", final]
-            sp.run(cmd2, capture_output=True, text=True, timeout=600)
-            if Path(final).exists() and Path(final).stat().st_size > 0:
-                # 用高清成片替换原成片
-                base.unlink(missing_ok=True)
-                Path(final).rename(base)
-                Path(hd_path).unlink(missing_ok=True)
-                logger.info(f"[VideoComposeAgent] 超分+滤镜完成: {base}")
+                   "-pix_fmt", "yuv420p", "-r", "25", str(tmp)]
+            r = sp.run(cmd, capture_output=True, text=True, timeout=1800)
+            if not tmp.exists() or tmp.stat().st_size == 0:
+                logger.warning(f"[VideoComposeAgent] 超分失败，保留原成片: {r.stderr[-300:]}")
+                tmp.unlink(missing_ok=True)
+                return False
+            tmp.replace(base)
+            logger.info(f"[VideoComposeAgent] 超分+滤镜完成（2x）: {base}")
+            return True
         except Exception as e:
-            logger.error(f"[VideoComposeAgent] 超分异常: {e}")
+            logger.error(f"[VideoComposeAgent] 超分异常，保留原成片: {e}")
+            tmp.unlink(missing_ok=True)
+            return False
 
     # ── 字幕烧录（PIL 生成字幕 PNG + ffmpeg overlay）───
     def _burn_subtitles(self, video_path: str, srt_path: str,
@@ -412,11 +454,12 @@ class VideoComposeAgent(Agent):
         bgm_path: str | None,
         output_path: str,
         force_eq_fallback: bool = False,
+        target_durations: list[float] | None = None,
     ) -> tuple[list[str], dict]:
         """构造增强版 FFmpeg 合成命令（纯命令构造，不实际执行）。
 
         内含 4 类滤镜：
-          1) xfade 镜头间 1s 平滑转场（单段视频时跳过）
+          1) 每段按分镜目标时长拉伸/补齐 + xfade 镜头间 1s 平滑转场（单段跳过）
           2) colorgrade 电影调色；FFmpeg 不支持时 force_eq_fallback=True 走 eq 等效参数
           3) 音频：全部音轨合并 → acompressor 压限 → 开头 1s 淡入 + 末尾 2s 淡出
           4) 字幕：subtitles.srt / subtitles.ass 用 subtitles 或 ass 滤镜烧录（底部白色描边）
@@ -427,6 +470,8 @@ class VideoComposeAgent(Agent):
             bgm_path: BGM 音频路径，None 表示不加 BGM
             output_path: 输出 MP4 路径
             force_eq_fallback: True 时用 eq 滤镜调色，False 时优先用 colorgrade
+            target_durations: 与 shot_videos 一一对应的目标时长（分镜时长，秒）；
+                提供后成片总时长≈Σ分镜时长，且每个镜头起始点与分镜/字幕时间轴一致
 
         Returns:
             (ffmpeg args 列表[str], 元数据 dict)
@@ -435,51 +480,91 @@ class VideoComposeAgent(Agent):
                 transition_count        —— xfade 过渡次数（0 表示无需转场）
                 used_colorgrade_fallback—— True 用了 eq 回退、False 用了 colorgrade
         """
-        import subprocess as _sp
-
         n = len(shot_videos)
         assert n >= 1, "shot_videos 至少需要 1 段"
 
-        # ── 步骤 1：用 ffprobe 读取每段视频的时长 ────────────────────────
-        durations: list[float] = []
-        for vp in shot_videos:
-            r = _sp.run(
-                ["ffprobe", "-v", "quiet",
-                 "-show_entries", "format=duration", "-of", "csv=p=0", str(vp)],
-                capture_output=True, text=True, timeout=15,
-            )
-            try:
-                durations.append(float(r.stdout.strip()))
-            except ValueError:
-                # 兜底：读不到时默认按 5 秒估算，保证命令能构造出来
-                durations.append(5.0)
+        # ── 步骤 1：读取每段视频的**视频流**时长（秒）────────────────────
+        # 用视频流时长而非容器时长：容器还含 LTX 自带的 AAC 音轨，会长 0.2~0.3s，
+        # 拿来当变速基准会让每段变短、xfade 处露出冻结末帧。
+        durations: list[float] = [_probe_duration(vp) for vp in shot_videos]
 
-        # ── 步骤 2：计算总时长 & 过渡次数（xfade 每段重叠 1 秒）──────────
+        # ── 步骤 2：对齐分镜目标时长 + 计算总时长/过渡次数 ───────────────
+        TRANSITION = XFADE_TRANSITION   # xfade 转场时长（秒）
+        MIN_SPEED = 0.5    # 最快播放倍率（避免夸张快放）
+        MAX_SLOW = 2.0     # 最慢播放倍率（避免夸张慢放）
+
+        # 分镜时长是「镜头净可见时长」，但 xfade 每段会与下一段重叠 TRANSITION 秒。
+        # 给非末段多留 TRANSITION 秒，则：
+        #   总时长 = Σ(分镜时长 + TRANSITION) - (n-1)*TRANSITION = Σ分镜时长
+        #   第 i 个镜头起点 = Σ前 i 个分镜时长（与 SRT 时间轴严格一致）
+        targets: list[float] = []
+        for i in range(n):
+            t = None
+            if target_durations and i < len(target_durations):
+                try:
+                    t = float(target_durations[i]) if target_durations[i] else None
+                except (TypeError, ValueError):
+                    t = None
+            if t and t > 0.1:
+                targets.append(t + (TRANSITION if i < n - 1 else 0.0))
+            else:
+                # 无分镜时长（如缺分镜结果）→ 沿用片段真实时长，行为与改造前一致
+                targets.append(durations[i])
+
         transition_count = max(0, n - 1)
-        total_duration = sum(durations) - transition_count * 1.0
+        total_duration = sum(targets) - transition_count * TRANSITION
         if total_duration < 0.1:
             total_duration = 0.1  # 防止出现负值或 0
 
         # ── 步骤 3：构造视频 filter_complex 链 ──────────────────────────
         fc: list[str] = []
+        ratios: list[float] = []      # 每段变速倍率（>1 慢放 / <1 快放）
+        trim_tos: list[float | None] = []  # 需要裁剪到的时长
+        pads: list[float] = []        # 需要冻结末帧补齐的时长
 
-        # 3.1 给每段视频的视频流打标签 + 归零时间轴
+        # 3.1 每段归零时间轴 + 按分镜时长拉伸/补齐
         for i in range(n):
-            fc.append(f"[{i}:v]setpts=PTS-STARTPTS[v{i}]")
+            real = durations[i] if durations[i] > 0.1 else 0.1
+            target = targets[i]
+            ratio = target / real
+            trim_to: float | None = None
+            pad = 0.0
+            if ratio < MIN_SPEED:
+                ratio, trim_to = MIN_SPEED, target
+            elif ratio > MAX_SLOW:
+                ratio, pad = MAX_SLOW, max(0.0, target - real * MAX_SLOW)
+            elif ratio > 1.0:
+                pad = max(0.0, target - real * ratio)
+            ratios.append(ratio)
+            trim_tos.append(trim_to)
+            pads.append(pad)
 
-        # 3.2 xfade 两两交叉淡化（过渡 1s）
+            seg = f"[{i}:v]setpts=PTS-STARTPTS"
+            if abs(ratio - 1.0) > 1e-3:
+                seg += f",setpts=PTS*{ratio:.6f}"
+            if trim_to is not None:
+                seg += f",trim=duration={trim_to:.3f},setpts=PTS-STARTPTS"
+            if pad > 0.02:
+                seg += f",tpad=stop_mode=clone:stop_duration={pad:.3f}"
+            # ★ CFR 归一化：setpts=PTS*ratio 会让帧间隔不再均匀，这种非均匀 PTS 直接喂给
+            # xfade（按时间戳做 alpha 混合）会在转场处插入 0.4~1.16s 的「保持帧」，
+            # 表现为画面冻结。插入 fps=25 把每段重采样成恒定帧率即可消除。
+            seg += ",fps=25"
+            fc.append(f"{seg}[v{i}]")
+
+        # 3.2 xfade 两两交叉淡化（过渡 TRANSITION 秒，offset 按目标时长推算）
         last_v = "v0"
         if n > 1:
             cumulative = 0.0  # 累计「不重叠」情况下的时长
             for i in range(1, n):
-                cumulative += durations[i - 1]
-                # 通用 xfade offset：每叠一次，就再往前挪 1s
-                offset = cumulative - i * 1.0
+                cumulative += targets[i - 1]
+                # 通用 xfade offset：每叠一次，就再往前挪 TRANSITION 秒
+                offset = cumulative - i * TRANSITION
                 left = last_v
                 right = f"v{i}"
                 out_tag = f"vx{i}"
                 fc.append(
-                    f"[{left}][{right}]xfade=transition=fade:duration=1.0:offset={offset:.3f}[{out_tag}]"
+                    f"[{left}][{right}]xfade=transition=fade:duration={TRANSITION}:offset={offset:.3f}[{out_tag}]"
                 )
                 last_v = out_tag
 
@@ -499,27 +584,10 @@ class VideoComposeAgent(Agent):
         color_out = "vcolored"
         fc.append(f"[{last_v}]{color_filter}[{color_out}]")
 
-        # 3.4 字幕滤镜（subtitles / ass）—— 底部居中 + 白色描边
-        pre_sub = color_out
-        if subtitles_path and Path(subtitles_path).exists():
-            # FFmpeg subtitles 滤镜里的路径冒号需要转义
-            escaped = str(subtitles_path).replace(":", r"\:")
-            # 样式：Arial/白字/黑描边 2px/底部居中/底部留 30px 边距
-            style = (
-                "FontName=Arial,FontSize=24,PrimaryColour=&H00FFFFFF,"
-                "OutlineColour=&H00000000,BorderStyle=1,Outline=2,Shadow=0,"
-                "Alignment=2,MarginV=30"
-            )
-            ext = Path(subtitles_path).suffix.lower()
-            if ext == ".ass":
-                sub_filter = f"ass='{escaped}'"
-            else:
-                sub_filter = f"subtitles='{escaped}':force_style='{style}'"
-            sub_out = "vsub"
-            fc.append(f"[{pre_sub}]{sub_filter}[{sub_out}]")
-            final_v = sub_out
-        else:
-            final_v = pre_sub
+        # 字幕不在滤镜链里烧录（subtitles 滤镜依赖 libass，本机 ffmpeg 未编译，
+        # 且 force_style 里的逗号会被 filter 解析器拆开导致整链失败）。
+        # 改为合成完成后单独用 PIL overlay 方式烧录（见 run() → _burn_subtitles）。
+        final_v = color_out
 
         # ── 步骤 4：构造音频 filter_complex 链 ──────────────────────────
         audio_input_tags: list[str] = []
@@ -528,10 +596,20 @@ class VideoComposeAgent(Agent):
         for i in range(n):
             if self._has_audio_stream(shot_videos[i]):
                 tag = f"ain{len(audio_input_tags)}"
-                fc.append(
-                    f"[{i}:a]aformat=sample_rates=44100:channel_layouts=stereo,"
-                    f"asetpts=PTS-STARTPTS[{tag}]"
-                )
+                afx = ["aformat=sample_rates=44100:channel_layouts=stereo",
+                       "asetpts=PTS-STARTPTS"]
+                # 视频端走了拉伸/裁剪，音频必须同步变速/裁补，否则音画不同步。
+                # 倍率用**音频流自己的时长**做基准（它通常比视频流长 0.2~0.3s），
+                # 用视频倍率会让每段音频比画面长，末尾累积出大段「黑屏只有声音」。
+                a_real = _probe_duration(shot_videos[i], "a:0")
+                a_ratio = (targets[i] / a_real) if a_real > 0.1 else ratios[i]
+                if abs(a_ratio - 1.0) > 1e-3:
+                    afx += self._atempo_chain(1.0 / a_ratio)
+                if trim_tos[i] is not None:
+                    afx += [f"atrim=duration={trim_tos[i]:.3f}", "asetpts=PTS-STARTPTS"]
+                if pads[i] > 0.02:
+                    afx.append(f"apad=pad_dur={pads[i]:.3f}")
+                fc.append(f"[{i}:a]" + ",".join(afx) + f"[{tag}]")
                 audio_input_tags.append(tag)
 
         # 4.2 BGM（如果有）：作为紧接视频之后的输入，index = n
@@ -631,6 +709,7 @@ class VideoComposeAgent(Agent):
         subtitles_path: str | None,
         bgm_path: str | None,
         output_path: str,
+        target_durations: list[float] | None = None,
     ) -> bool:
         """增强版合成入口：先跑增强版命令，失败自动回退，任何情况不抛异常。
 
@@ -640,10 +719,11 @@ class VideoComposeAgent(Agent):
           3) 再失败 → 退回到「顺序 concat demuxer 硬切」（几乎任何 FFmpeg 都能跑）
         """
         try:
-            # —— 第一轮：colorgrade 版增强命令 —————————————————————————
+            # —— 第一轮：colorgrade 版增强命令（本机不支持则直接 eq 版）———
             cmd, meta = self._build_enhanced_ffmpeg_command(
                 video_paths, subtitles_path, bgm_path, output_path,
-                force_eq_fallback=False,
+                force_eq_fallback=not self.use_colorgrade,
+                target_durations=target_durations,
             )
             logger.info(
                 "[VideoComposeAgent] 尝试增强版合成 "
@@ -666,6 +746,7 @@ class VideoComposeAgent(Agent):
                 cmd2, _ = self._build_enhanced_ffmpeg_command(
                     video_paths, subtitles_path, bgm_path, output_path,
                     force_eq_fallback=True,
+                    target_durations=target_durations,
                 )
                 r2 = sp.run(cmd2, capture_output=True, text=True, timeout=600)
                 if (r2.returncode == 0

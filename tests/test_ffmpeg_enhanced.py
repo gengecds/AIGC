@@ -19,16 +19,19 @@ from agents.video_compose_agent import VideoComposeAgent
 def _ffprobe_mock_side_effect(args, **kwargs):
     """根据传入的 ffprobe 命令，返回对应的假结果。
 
-    负责两类 ffprobe 调用：
-      - format=duration      → 返回 "5.0"（每段视频 5 秒）
-      - select_streams a ... → 返回 "1"  （视频都带音轨）
+    负责三类 ffprobe 调用：
+      - -select_streams a    → 返回 "1"  （视频都带音轨）
+      - stream=duration      → 返回 "5.0"（每段视频流 5 秒）
+      - format=duration      → 返回 "5.0"（容器时长，兜底路径）
     """
     cmd_str = " ".join(args)
 
+    if "ffprobe" in cmd_str and "-select_streams a" in cmd_str:
+        return CompletedProcess(args, returncode=0, stdout="1", stderr="")
+    if "ffprobe" in cmd_str and "stream=duration" in cmd_str:
+        return CompletedProcess(args, returncode=0, stdout="5.0", stderr="")
     if "ffprobe" in cmd_str and "format=duration" in cmd_str:
         return CompletedProcess(args, returncode=0, stdout="5.0", stderr="")
-    if "ffprobe" in cmd_str and "select_streams" in cmd_str:
-        return CompletedProcess(args, returncode=0, stdout="1", stderr="")
 
     # 理论上本测试里不会触发非 ffprobe 的 sp.run
     raise RuntimeError(f"测试不允许执行真实命令，截获: {cmd_str}")
@@ -92,6 +95,10 @@ class TestBuildEnhancedFfmpegCommand(unittest.TestCase):
         # 4) 必须有 afade 淡入淡出
         self.assertIn("afade", flat, "必须包含 afade 淡入淡出")
 
+        # 5) 每段必须做 CFR 归一化（fps=25），否则 xfade 前 PTS 非均匀会出冻结帧
+        self.assertIn("fps=25", flat, "每段视频必须做 fps=25 CFR 归一化")
+        self.assertEqual(flat.count("fps=25"), 3, "3 段视频应各出现一次 fps=25")
+
         # 元数据校验：过渡次数 = 3-1 = 2
         self.assertEqual(meta["transition_count"], 2)
         # 默认 force_eq_fallback=False → 没用 eq 回退
@@ -128,11 +135,13 @@ class TestBuildEnhancedFfmpegCommand(unittest.TestCase):
         self.assertEqual(meta["transition_count"], 0)
         self.assertAlmostEqual(meta["total_duration"], 5.0, places=2)
 
-    # ────────────────── TEST 3：传 .srt 必须有 subtitles= ──────────────────
+    # ────────────────── TEST 3：传 .srt 不走滤镜链 ──────────────────
 
-    def test_srt_path_adds_subtitles_filter(self):
-        """传 fake .srt 路径 → args 里必须包含 subtitles= 关键词
-        （形式可以是 subtitles=' 或 subtitles=xxx，只要有就行）。
+    def test_srt_path_not_in_filter_chain(self):
+        """传 fake .srt 路径 → 滤镜链里**不能**出现 subtitles=。
+
+        本机 ffmpeg 未编译 libass，字幕改由 _burn_subtitles 用 PIL overlay 单独烧录，
+        所以 subtitles_path 只作参数占位，不应进 filter_complex。
         """
         fake_videos = ["/tmp/a.mp4", "/tmp/b.mp4"]
         fake_srt = "/tmp/fake_subtitles.srt"
@@ -146,11 +155,9 @@ class TestBuildEnhancedFfmpegCommand(unittest.TestCase):
         )
         flat = " ".join(args)
 
-        # 必须出现 subtitles= （FFmpeg 滤镜入口）
-        self.assertTrue(
-            "subtitles=" in flat or "subtitles\\'" in flat,
-            f"args 里应该包含 subtitles= 滤镜关键词，实际是: {flat[:300]}..."
-        )
+        # 字幕单独烧录 → 滤镜链里不该再有 subtitles/ass 滤镜
+        self.assertNotIn("subtitles=", flat, "字幕应单独烧录，不应进 filter_complex")
+        self.assertNotIn("ass=", flat, "字幕应单独烧录，不应进 filter_complex")
 
         # force_eq_fallback=True → 调色用的是 eq，且 contrast 应该是 1.05
         self.assertIn("contrast=1.05", flat, "eq fallback 必须含 contrast=1.05")

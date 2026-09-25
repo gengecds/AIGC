@@ -60,7 +60,7 @@ class MockScriptAgent(Agent):
 class MockStoryboardAgent(Agent):
     def __init__(self):
         super().__init__(name="storyboard_agent")
-    async def run(self, script: dict) -> AgentResult:
+    async def run(self, script: dict, voice_plan: list = None) -> AgentResult:
         return AgentResult(success=True, data={"shots": [
             {"shot_id": 1, "scene_id": 1, "description": "林峰在废墟中", "shot_type": "中景", "duration": 5, "character": "林峰",
              "sd_prompt": "young man in leather jacket, ruins", "sd_negative": "blurry", "video_motion": "slow pan"},
@@ -111,7 +111,7 @@ class MockVideoComposeAgent(Agent):
     """Agent 7：视频合成（取代旧 compose_agent，输出 published 列表）"""
     def __init__(self):
         super().__init__(name="video_compose_agent")
-    async def run(self, videos_result, subtitle_result) -> AgentResult:
+    async def run(self, videos_result, subtitle_result, storyboard_result=None) -> AgentResult:
         return AgentResult(success=True, data={
             "published": [
                 {"path": "mock/final_ep01.mp4", "final_path": "mock/final_ep01.mp4", "duration": 35},
@@ -123,7 +123,43 @@ class MockAudioAgent(Agent):
     """Agent 8：音频（配音+BGM+音效）"""
     def __init__(self):
         super().__init__(name="audio_agent")
-    async def run(self, published_result, script_result, srt_result, research_plan) -> AgentResult:
+
+    def plan_voices(self, script_result, output_dir: str = "storage/audio/plan",
+                    on_progress=None) -> list[dict]:
+        """逐句配音预测量（Mock：按字数估算时长，不调 TTS）"""
+        data = script_result.data if hasattr(script_result, "data") else (script_result or {})
+        plan = []
+        for ep in (data or {}).get("episodes", []) or []:
+            for d in ep.get("dialogues", []) or []:
+                text = d.get("line") or ""
+                if not text:
+                    continue
+                dur = round(0.3 * len(text), 3)
+                plan.append({
+                    "index": len(plan),
+                    "episode_number": ep.get("episode_number") or 1,
+                    "text": text,
+                    "character": d.get("character") or "",
+                    "voice_prompt": "",
+                    "dur": dur,
+                    "slot": round(dur + 0.4, 3),
+                    "wav_path": "",
+                })
+        # 与真实 plan_voices 一致：逐句回调进度（供上层转发「配音预测量 N/M」）
+        total = len(plan)
+        if on_progress:
+            on_progress({"done": 0, "total": total, "percent": 0,
+                         "character": "", "text": "", "elapsed": 0.0, "eta": 0.0})
+            for p in plan:
+                done = p["index"] + 1
+                on_progress({"done": done, "total": total,
+                             "percent": done * 100 // total,
+                             "character": p["character"] or "旁白", "text": p["text"],
+                             "elapsed": 0.0, "eta": 0.0})
+        return plan
+
+    async def run(self, published_result, script_result, srt_result, research_plan,
+                  storyboard_result=None, voice_plan: list = None) -> AgentResult:
         return AgentResult(success=True, data={"final_video": "mock/final_ep01_audio.mp4"})
 
 

@@ -96,40 +96,41 @@ class ImageGenAgent(Agent):
                 if character_assets and first_char:
                     asset = character_assets.get(first_char, {})
                     ref_path = asset.get("controlnet_ref_path")
-                # 原始 sd_prompt + 风格合并关键词（多风格自由组合）+ Skills 质量块 + 影视级质感词
-                from config.style_resolver import style_keywords
+                # 原始 sd_prompt + 风格合并关键词（多风格自由组合）+ LoRA 触发词 + Skills 质量块 + 影视级质感词
+                from config.style_resolver import (
+                    style_keywords, lora_triggers_for_style, filter_conflicting_negative,
+                )
                 _style_kw = style_keywords()
+                _lora_trig = lora_triggers_for_style()
                 _skills = _shot_skills(shot)
+                _neg = (shot.get("sd_negative", "").strip() + ", " + _SKILLS_NEGATIVE).strip() \
+                    if shot.get("sd_negative", "").strip() else _SKILLS_NEGATIVE
                 prompt = shot.get("sd_prompt", "")
                 if _style_kw:
                     prompt = f"{prompt}, {', '.join(_style_kw)}" if prompt else ", ".join(_style_kw)
+                if _lora_trig:
+                    prompt = f"{prompt}, {', '.join(_lora_trig)}" if prompt else ", ".join(_lora_trig)
                 if _skills:
                     prompt = f"{prompt}, {_skills}" if prompt else _skills
                 shot_data.append({
                     "shot_id": str(shot["shot_id"]),
                     "sd_prompt": (prompt + _QUALITY_TAIL).strip(),
-                    "sd_negative": (shot.get("sd_negative", "").strip() + ", " + _SKILLS_NEGATIVE).strip()
-                                     if shot.get("sd_negative", "").strip() else _SKILLS_NEGATIVE,
+                    "sd_negative": filter_conflicting_negative(_neg),
                     "seed": shot.get("seed", -1),
                     "ref_image": ref_path,
-                    "controlnet_type": "control_v11p_sd15_canny",
+                    "controlnet_type": "control_v11p_sd15_canny.pth",
                     "controlnet_image": ref_path,
                     "controlnet_strength": 0.8,
                     "width": int(shot.get("width", 768)),
                     "height": int(shot.get("height", 768)),
                 })
 
-            # batch_generate 返回 list[dict]，转为 {shot_id: file_info} 格式
-            image_list = await self.image_provider.batch_generate(shot_data)
-            # image_list: [{'filename':...,'subfolder':...,'type':...,'prompt_id':...}]
-            # 映射为 shot_id → file_info
-            ep_images = {}
-            for i, img_info in enumerate(image_list):
-                sid = shot_data[i].get("shot_id", str(i))
-                ep_images[sid] = img_info
+            ep_images = await self._generate_with_qc(shot_data)
             all_results[f"ep_{ep_num}"] = ep_images
 
         total = sum(len(v) for v in all_results.values())
+        scores = [v.get("qc", {}).get("score") for ep in all_results.values()
+                  for v in ep.values() if v.get("qc", {}).get("score") is not None]
         result = AgentResult(
             success=True,
             data={"images": all_results},
@@ -137,7 +138,64 @@ class ImageGenAgent(Agent):
                 "agent": self.name,
                 "timestamp": datetime.utcnow().isoformat(),
                 "total_images": total,
+                "qc_checked": len(scores),
+                "qc_avg_score": round(sum(scores) / len(scores), 1) if scores else None,
             },
         )
-        logger.info(f"[ImageGenAgent] 完成: {total}张图")
+        logger.info(f"[ImageGenAgent] 完成: {total}张图"
+                    + (f"，质检均分 {result.metadata['qc_avg_score']}" if scores else ""))
         return result
+
+    async def _generate_with_qc(self, shot_data: list[dict]) -> dict:
+        """批量出图 + 质检自评；不合格的镜头换 seed 自动重生成（最多 max_retries 次）。
+
+        流程：出图 → 落地本地 → 视觉模型打 tag → 按 tag 算分 → 不达标则重出。
+        质检不可用（无图 / 无 Key / 模型报错）时一律放行，绝不因质检中断整条管线。
+        """
+        from providers.comfyui_provider import sync_image_to_local
+        from providers.image_critic import ImageCritic, next_seed
+
+        critic = ImageCritic()
+        if not critic.enabled:
+            image_list = await self.image_provider.batch_generate(shot_data)
+            return self._index_images(image_list, shot_data)
+
+        pending = list(shot_data)
+        best: dict[str, dict] = {}
+        attempt = 0
+        while pending and attempt <= critic.max_retries:
+            image_list = await self.image_provider.batch_generate(pending)
+            got = self._index_images(image_list, pending)
+            next_pending = []
+            for shot in pending:
+                sid = str(shot.get("shot_id"))
+                img = got.get(sid)
+                if not img:
+                    # 本次没出图：未到重试上限就再试一次
+                    if attempt < critic.max_retries:
+                        next_pending.append({**shot, "seed": next_seed(shot.get("seed"))})
+                    continue
+                local = sync_image_to_local(img)
+                qc = await critic.evaluate(local, expect=shot.get("sd_prompt", ""))
+                logger.info(f"[ImageGenAgent] 质检 shot={sid}: {qc.get('reason')} "
+                            f"tags={qc.get('tags')} defects={qc.get('defects')}")
+                if qc["passed"]:
+                    best[sid] = {**img, "qc": qc, "local_path": local}
+                elif attempt < critic.max_retries:
+                    logger.warning(f"[ImageGenAgent] shot={sid} 质检不达标（{qc.get('reason')}），重生成")
+                    next_pending.append({**shot, "seed": next_seed(shot.get("seed"))})
+                else:
+                    logger.warning(f"[ImageGenAgent] shot={sid} 质检仍不达标，保留当前结果")
+                    best[sid] = {**img, "qc": qc, "local_path": local}
+            pending = next_pending
+            attempt += 1
+        return best
+
+    @staticmethod
+    def _index_images(image_list: list[dict], shots: list[dict]) -> dict:
+        """把 batch_generate 的扁平结果按 shot_id 归位（缺失 shot_id 时按顺序兜底）。"""
+        indexed: dict[str, dict] = {}
+        for i, img in enumerate(image_list):
+            sid = img.get("shot_id") or (shots[i].get("shot_id") if i < len(shots) else str(i))
+            indexed[str(sid)] = img
+        return indexed

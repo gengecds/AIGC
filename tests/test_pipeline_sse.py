@@ -43,19 +43,37 @@ _test_app = FastAPI(title="SSE Smoke Test")
 _test_app.include_router(pipeline_events_router)
 
 
-def test_sse_demo_headers_and_first_event():
-    """验证 __demo__ 模式的 SSE：header + 首条 progress 事件。"""
+def test_sse_real_headers_and_first_event():
+    """验证真实模式的 SSE：header + 首条 progress 事件（回放已发布的历史事件）。"""
 
-    # 用 TestClient 包装隔离的 app
+    # 先发布一条真实事件，再用同一 run_id 订阅，验证历史回放通道。
+    # 末尾补发 done，让真实流在回放后自然终止（否则 keepalive 循环不会结束）。
+    run_id = "test_real_run_123"
+    publish_pipeline_event(
+        run_id=run_id,
+        event={
+            "type": "progress",
+            "step": 0,
+            "step_name": "剧本审查",
+            "percent": 20,
+            "message": "LLM 已生成剧本初稿，等待人工审查",
+            "payload": {"title": "测试剧本", "script": "测试内容"},
+        },
+    )
+    publish_pipeline_event(
+        run_id=run_id,
+        event={"type": "done", "step": 0, "step_name": "剧本审查", "percent": 100,
+               "message": "完成", "payload": None},
+    )
+
     client = TestClient(_test_app)
 
     # —— 1. 发 stream 请求（httpx stream 模式）——
-    # __demo__ 模式每秒推一条，我们只读到第一条完整事件就停止
     with client.stream(
         "GET",
         "/pipeline/events",
-        params={"run_id": "__demo__"},
-        timeout=5.0,  # 5 秒超时（首条 1 秒出，留 4 秒余量）
+        params={"run_id": run_id},
+        timeout=5.0,
     ) as resp:
         # —— 1.1 Header 断言 ——
         content_type = resp.headers.get("content-type", "")
@@ -68,25 +86,20 @@ def test_sse_demo_headers_and_first_event():
         # —— 可选：验证反代理 / 浏览器友好的 header ——
         xaccel = resp.headers.get("x-accel-buffering", "")
         if xaccel:
-            # 有 X-Accel-Buffering: no 是加分项
             assert xaccel.lower() == "no"
             print(f"✅ Header X-Accel-Buffering={xaccel!r}（Nginx 不禁缓冲 SSE）")
 
         # —— 1.2 首条 chunk 断言 ——
-        # 迭代流式字节，直到拿到至少一条完整 SSE 事件（\n\n 结尾）
         first_chunk: bytes = b""
         for chunk in resp.iter_bytes(chunk_size=8192):
             first_chunk += chunk
-            # 至少包含一个完整 SSE 事件（出现 \n\n 分隔符）
             if b"\n\n" in first_chunk and len(first_chunk) > 20:
                 break
-            # 安全上限：64KB 还没拿到完整事件就停止（防止 hang）
             if len(first_chunk) > 65536:
                 break
 
         first_text = first_chunk.decode("utf-8", errors="replace")
         print(f"✅ 首段 SSE 数据长度: {len(first_text)} 字节")
-        # 展示预览（最多 400 字符）
         preview = first_text[:400].replace("\n", "\\n")
         print(f"   内容预览: {preview!r}")
         if len(first_text) > 400:
@@ -104,7 +117,7 @@ def test_sse_demo_headers_and_first_event():
         )
         print("✅ 包含 SSE 协议行 'data:' 前缀")
 
-        # —— 断言 C：Step 0 特征词（剧本 / script / step_name / step:0）——
+        # —— 断言 C：Step 0 特征词（剧本 / script / step_name）——
         step0_keywords = ("剧本", '"step": 0', '"step_name":', 'script')
         found_keyword = any(kw in first_text for kw in step0_keywords)
         assert found_keyword, (
@@ -112,7 +125,7 @@ def test_sse_demo_headers_and_first_event():
         )
         print("✅ 首条事件包含 Step 0 (剧本审查) 特征词")
 
-        # —— 断言 D：提取出 data 的 JSON，验证 step=0 step_name=剧本审查 ——
+        # —— 断言 D：提取 data JSON，验证 step=0 step_name=剧本审查 ——
         m = re.search(
             r"event:\s*progress\s*\ndata:\s*(\{.*?\})\s*\n\n",
             first_text,
@@ -130,7 +143,7 @@ def test_sse_demo_headers_and_first_event():
             f"percent={parsed.get('percent')}%"
         )
 
-    print("🎉 __demo__ SSE header + 首条事件 全部断言通过！")
+    print("🎉 真实模式 SSE header + 首条事件 全部断言通过！")
 
 
 def test_sse_invalid_run_id():
@@ -179,9 +192,9 @@ if __name__ == "__main__":
 
     failures = 0
 
-    # 1) 核心 SSE __demo__ 测试
+    # 1) 核心 SSE 真实模式测试
     try:
-        test_sse_demo_headers_and_first_event()
+        test_sse_real_headers_and_first_event()
     except AssertionError as e:
         print(f"\n❌ 核心测试失败: {e}")
         failures += 1

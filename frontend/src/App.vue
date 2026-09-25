@@ -1,5 +1,5 @@
 <template>
-  <div id="app">
+  <div class="app-root">
     <nav class="top-nav">
       <router-link to="/pipeline" class="nav-link" active-class="nav-active">漫剧创作</router-link>
       <router-link to="/intelligence" class="nav-link" active-class="nav-active">情报看板</router-link>

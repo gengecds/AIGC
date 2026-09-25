@@ -5,6 +5,7 @@
 情绪 BGM + 场景音效 + 配音 + 更高音量 → ep_1_with_sub_audio.mp4
 """
 import asyncio
+import json
 import sys
 from pathlib import Path
 
@@ -40,9 +41,15 @@ async def main():
         "bgm_mood": "温馨",
         "scene_sounds": ["煎锅滋滋", "车流"],
     }
+    # 分镜断点（可选）：读入后可按镜头角色/说话人分配音色，让配音与人物对得上
+    storyboard = None
+    sb_path = Path("storage/checkpoints_real/storyboard_agent_checkpoint.json")
+    if sb_path.exists():
+        storyboard = SimpleResult(json.loads(sb_path.read_text(encoding="utf-8")).get("data") or {})
 
     agent = AudioAgent()
-    result = await agent.run(compose, script, subtitle, plan)
+    result = await agent.run(compose, script, subtitle, plan,
+                             storyboard_result=storyboard, voice_plan=None)
     if result.success and result.data.get("final_video"):
         print("✓ 增强音频成片:", result.data["final_video"])
         print("  配音:", len(result.data.get("voices", [])), "句")

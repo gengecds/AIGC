@@ -15,6 +15,8 @@ from fastapi.middleware.cors import CORSMiddleware
 
 from db.database import get_engine, close_engine
 
+from api.shutdown import install_signal_hook, request_shutdown, reset_shutdown
+
 # 日志
 logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(name)s] %(levelname)s: %(message)s")
 logger = logging.getLogger("ai-drama")
@@ -43,7 +45,15 @@ async def lifespan(app: FastAPI):
     for d in ["storage/output", "storage/checkpoints"]:
         os.makedirs(d, exist_ok=True)
     logger.info("应用启动完毕")
+    reset_shutdown()
+    # 关闭信号必须在「uvicorn 等连接」之前触发，所以链到信号处理器（reload 走 SIGTERM、
+    # Ctrl+C 走 SIGINT），而不是等到 lifespan 退出——那时连接早被硬 cancel 了。
+    restore_signals = install_signal_hook()
     yield
+    # 兜底：非信号路径退出（如 lifespan 被直接关闭）也要唤醒各 SSE 生成器收尾
+    request_shutdown()
+    logger.info("已通知 SSE 长连接收尾")
+    restore_signals()
     close_engine()
     logger.info("应用已关闭")
 
@@ -118,9 +128,13 @@ from api.routes.audio_router import router as audio_router
 app.include_router(audio_router)
 
 # Pipeline SSE 进度事件流（域 D 独立，供前端 5 步向导式 Review UI 订阅）
-# 端点：GET /pipeline/events?run_id=xxx （__demo__ 推假数据方便联调）
+# 端点：GET /pipeline/events?run_id=xxx（订阅真实管线 run_id，__demo__ 已移除）
 from api.routes.pipeline_events_router import router as pipeline_events_router
 app.include_router(pipeline_events_router)
+
+# ComfyUI 工作流模板导出（前端下载后在 ComfyUI 里查看/复用）
+from api.routes.comfyui_router import router as comfyui_router
+app.include_router(comfyui_router)
 
 
 if __name__ == "__main__":
@@ -131,4 +145,8 @@ if __name__ == "__main__":
         host=cfg["server"]["host"],
         port=cfg["server"]["port"],
         reload=True,
+        # SSE 长连接（/pipeline/events 等）不会主动结束，热重载关旧进程时 uvicorn 会一直卡在
+        # 「Waiting for connections to close」等连接释放（该参数默认 None = 无限等），
+        # reloader 的 process.join() 随之永久阻塞。设超时后到点强制取消残留连接与任务。
+        timeout_graceful_shutdown=3,
     )

@@ -5,7 +5,7 @@
 - mix_audio(): 把多条音轨（BGM + 配音 + 音效）按时间线混合成一条 WAV
 - mux_audio_to_video(): 用 FFmpeg 把音轨合成进视频成片
 
-输出统一为 22050Hz 单声道 16-bit PCM WAV，体积小、与 FFmpeg 兼容。
+输出统一为 44100Hz 单声道 16-bit PCM WAV，兼顾音质与 FFmpeg 兼容性。
 """
 
 import importlib.util
@@ -22,7 +22,7 @@ import numpy as np
 
 logger = logging.getLogger(__name__)
 
-SAMPLE_RATE = 22050
+SAMPLE_RATE = 44100
 
 # ── Piper TTS（本地中文女声）──────────────
 _voice = None
@@ -39,7 +39,9 @@ def _get_voice():
             raise FileNotFoundError(
                 f"Piper 中文模型缺失: {_TTS_MODEL}，请先下载 huayan 模型到 storage/tts/"
             )
+        t0 = time.time()
         _voice = PiperVoice.load(str(_TTS_MODEL), config_path=str(_TTS_CONFIG))
+        logger.info(f"[TTS:piper] 模型加载完成，用时 {time.time() - t0:.1f}s")
     return _voice
 
 
@@ -59,13 +61,30 @@ def _get_vox(device: str = "auto"):
     global _vox
     if _vox is None:
         from voxcpm.core import VoxCPM
+        logger.info(f"[TTS:voxcpm] 正在加载模型（首次较慢，约 20-30s，之后复用）: {_VOX_MODEL_DIR}")
+        t0 = time.time()
         _vox = VoxCPM(
             voxcpm_model_path=str(_VOX_MODEL_DIR),
             enable_denoiser=False,       # 去噪增强仅用于克隆，音色设计用不到
             optimize=False,              # 避免 torch.compile 不稳定
             device=device,
         )
+        logger.info(f"[TTS:voxcpm] 模型加载完成，用时 {time.time() - t0:.1f}s")
     return _vox
+
+
+def warm_up_tts(engine: str = "piper") -> float:
+    """提前加载 TTS 模型，返回加载用时（秒）。
+
+    批量合成（如配音预测量）前先调用，把「模型加载」这一步单独暴露并计时，
+    避免用户把首句 20-30s 的加载等待误认为卡死。
+    """
+    t0 = time.time()
+    if engine == "voxcpm":
+        _get_vox()
+    else:
+        _get_voice()
+    return round(time.time() - t0, 2)
 
 
 def _resample_float32(audio: np.ndarray, src_sr: int) -> np.ndarray:
@@ -106,7 +125,7 @@ def _synthesize_piper(text: str, output_path: str,
         return 0.0
     sr = chunks[0].sample_rate
     audio = np.concatenate([c.audio_int16_array for c in chunks])
-    # 统一采样率到 22050（与 BGM 一致）
+    # 统一采样率到 44100（与 BGM 一致）
     if sr != SAMPLE_RATE:
         idx = np.linspace(0, len(audio) - 1, int(len(audio) * SAMPLE_RATE / sr))
         audio = np.interp(idx, np.arange(len(audio)), audio).astype(np.int16)
@@ -126,7 +145,7 @@ def _synthesize_vox(text: str, output_path: str, voice_prompt: str) -> float:
     """VoxCPM2 音色设计合成路径
 
     设计模式：把音色控制说明以 "(描述)正文" 形式拼接为整段文本交给模型，
-    无需参考音频。模型输出 48kHz float32，统一重采样回 22050 单声道 16-bit。
+    无需参考音频。模型输出 48kHz float32，统一重采样回 44100 单声道 16-bit。
     """
     model = _get_vox()
     # 有音色控制说明时用 "(描述)正文"，无则仅正文（模型用默认音色）
@@ -139,8 +158,13 @@ def _synthesize_vox(text: str, output_path: str, voice_prompt: str) -> float:
     )
     audio = np.asarray(audio, dtype=np.float32).reshape(-1)
     if audio.size == 0:
-        logger.warning("[TTS:voxcpm] 输出为空，回退 Piper")
-        return _synthesize_piper(text, output_path)
+        logger.warning("[TTS:voxcpm] 输出为空，尝试回退 Piper")
+        try:
+            return _synthesize_piper(text, output_path)
+        except Exception as e:
+            # Piper 权重缺省时不要中断整条管线：返回 0 交由上层判定"无配音"
+            logger.warning(f"[TTS] Piper 回退不可用（{e}），本句跳过配音")
+            return 0.0
     src_sr = int(getattr(model.tts_model, "sample_rate", 48000))
     audio = _resample_float32(audio, src_sr)
     path = Path(output_path)
@@ -159,7 +183,7 @@ def _synthesize_vox(text: str, output_path: str, voice_prompt: str) -> float:
 def _save_wav(path, samples: np.ndarray, sample_rate: int | None = None):
     """把 float32 样本（-1~1）写成 16-bit PCM WAV。
 
-    sample_rate 默认 None → 走全局 SAMPLE_RATE=22050；
+    sample_rate 默认 None → 走全局 SAMPLE_RATE=44100；
     若 speed_ratio 调速需要临时保存"原始采样率"的 WAV，再由 FFmpeg 处理时
     需要精确匹配采样率，就显式传入 sample_rate。
     """
@@ -633,7 +657,7 @@ def _mock_clone(reference_audio_path: str, output_path: str) -> str:
         _write_empty_wav(output_path)
         return str(out)
 
-    # 策略 1：如果本机有 ffmpeg → 统一转成 22050Hz 单声道 16-bit PCM WAV
+    # 策略 1：如果本机有 ffmpeg → 统一转成 44100Hz 单声道 16-bit PCM WAV
     try:
         which_ff = shutil.which("ffmpeg")
         if which_ff:

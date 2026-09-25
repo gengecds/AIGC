@@ -762,6 +762,12 @@
               : '') +
             ((rs.scene_sounds || []).length
               ? `<div class="side-label" style="margin-top:10px">🔊 场景声效</div>` + rs.scene_sounds.map((s) => `<div class="dialogue">· ${esc(s)}</div>`).join('')
+              : '') +
+            ((rs.reference_cases && rs.reference_cases.length)
+              ? `<div class="side-label" style="margin-top:10px">🧠 参考案例（情报站/素材注入）</div>` +
+                rs.reference_cases.map((c) =>
+                  `<div class="dialogue">· ${esc(typeof c === 'string' ? c : (c && (c.summary || c.title || c.highlights)) || JSON.stringify(c))}</div>`
+                ).join('')
               : '');
           html += editToggleBtn('research');
           break;
@@ -1045,6 +1051,17 @@
           setCardState(d.agent, 'done', brief);
           setProgress(d.progress || 0, `${AGENT_LABELS[d.agent] || d.agent} 完成`);
           addLog('SUCCESS', d.agent, `✓ 完成（第 ${d.step}/${d.total} 步）${brief ? ' · ' + brief : ''}`);
+        } catch (_) { /* ignore */ }
+      });
+      es.addEventListener('voice_plan_progress', (e) => {
+        try {
+          const d = JSON.parse(e.data);
+          const done = d.done || 0, total = d.total || 0;
+          if (!done) {
+            addLog('INFO', 'audio', `🎙️ 配音预测量开始：共 ${total} 句（首次需加载模型，请稍候）`);
+          } else {
+            addLog('INFO', 'audio', `🎙️ 配音预测量 ${done}/${total} (${d.percent || 0}%) · ${d.character || '旁白'}：${d.text || ''}`);
+          }
         } catch (_) { /* ignore */ }
       });
       es.addEventListener('agent_fail', (e) => {
@@ -1964,5 +1981,11 @@
     } catch (_) { /* ignore */ }
   }
 
-  document.addEventListener('DOMContentLoaded', init);
+  // app.js 可能由 index.html 动态加载（loadScript），此时 DOMContentLoaded 或许已触发，
+  // 因此若文档已就绪则立即 init，否则等 DOMContentLoaded 后再 init。
+  if (document.readyState === 'loading') {
+    document.addEventListener('DOMContentLoaded', init);
+  } else {
+    init();
+  }
 })();

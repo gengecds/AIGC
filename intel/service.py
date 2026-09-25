@@ -1,11 +1,11 @@
-"""intel 服务层 — 把情报站的分析能力桥接到 AIGC（零破坏，默认关闭）。
+"""intel 服务层 — 把情报站的分析能力桥接到 AIGC（是否生效由 config.intel.enabled 决定，零破坏）。
 
 职责：
-- 依据 `INTEL_ENABLED` 开关（config.yaml `intel.enabled`，默认 False）决定是否生效；
+- 读取 config.settings.intel.enabled（可用 INTEL_ENABLED 环境变量覆盖）决定是否生效；
 - 开启时从 `storage/intel/cases/` 读取「作品元数据 + 转写文本」的情报案例，
   用 BenchmarkEngine 拆解成结构化参考素材，注入 research_agent 的 prompt，
   让 reference_cases 不再是 LLM 脑补；
-- 关闭时（默认）所有函数返回空值/原样，对现有管线零影响。
+- 关闭时所有函数返回空值/原样，对现有管线零影响。
 
 输入约定：每个情报案例是一个 .json 文件，形如：
 {
@@ -29,7 +29,7 @@ _DEFAULT_CASES_DIR = Path(__file__).parent.parent / "storage" / "intel" / "cases
 
 
 def intel_enabled() -> bool:
-    """是否开启情报能力（默认关闭）。读取 config.settings.intel.enabled。"""
+    """是否开启情报能力（读取 config.settings.intel.enabled，可用 INTEL_ENABLED 环境变量覆盖）。"""
     try:
         from config.settings import settings
 

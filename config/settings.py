@@ -50,7 +50,7 @@ class Settings:
         llm_prov = os.environ.get("LLM_PROVIDER")
         if llm_prov:
             self._data.setdefault("engine", {})["llm_provider"] = llm_prov
-        # 情报站能力开关（默认关闭；True/1/yes 时开启）
+        # 情报站能力开关：INTEL_ENABLED 环境变量可覆盖 config.yaml 的 intel.enabled（True/1/yes 开启）
         intel_enabled = os.environ.get("INTEL_ENABLED")
         if intel_enabled is not None:
             self._data.setdefault("intel", {})["enabled"] = intel_enabled.lower() in ("true", "1", "yes")

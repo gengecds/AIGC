@@ -46,28 +46,35 @@ def collect(keyword: str, limit: int) -> list[dict]:
     time.sleep(6)
     deep_scroll(3, 2)
 
-    # 小红书笔记卡片：链接 href 含 /explore/<id> 或 /discovery/item/<id>，标题常在 title 属性或 .title
+    # 小红书笔记卡片：链接 href 含 /explore/<id> 或 /discovery/item/<id>。注意卡片 <a> 是纯图片、
+    # 无 title 属性和文本，真实标题在卡片容器内的 [class*="title"] 元素里，须从容器往上取。
     js = """(()=>{
       const seen = new Set();
       const out = [];
       document.querySelectorAll('a[href*="/explore/"], a[href*="/discovery/item/"]').forEach(a => {
-        const el = a.querySelector('[class*="title"], span') || a;
-        const t = (a.title || el.textContent || '').trim();
-        if (t.length >= 4 && !seen.has(a.href)) {
-          seen.add(a.href);
-          out.push({title: t, url: a.href});
+        const href = a.getAttribute('href') || '';
+        const m = href.match(/\\/(?:explore|discovery\\/item)\\/([0-9a-f]+)/);
+        if (!m) return;
+        const id = m[1];
+        const card = a.closest('section') || a.closest('div');
+        let title = '';
+        if (card) {
+          const te = card.querySelector('[class*="title"] span, [class*="title"]');
+          title = te ? (te.textContent || '').replace(/\\s+/g, ' ').trim() : '';
+        }
+        if (!title) {  // 兜底：沿父级向上找最近的标题容器
+          let n = a.parentElement;
+          for (let i = 0; i < 6 && n && !title; i++) {
+            const te = n.querySelector('[class*="title"]');
+            if (te) title = (te.textContent || '').replace(/\\s+/g, ' ').trim();
+            n = n.parentElement;
+          }
+        }
+        if (title.length >= 4 && !seen.has(id)) {
+          seen.add(id);
+          out.push({title, url: a.href, video_id: id});
         }
       });
-      if (out.length === 0) {
-        document.querySelectorAll('span[class*="title"], div[class*="title"]').forEach(el => {
-          const t = (el.textContent || '').trim();
-          const a = el.closest('a');
-          if (t.length >= 4 && a && a.href) {
-            const h = a.href.split('?')[0];
-            if (!seen.has(h)) { seen.add(h); out.push({title: t, url: h}); }
-          }
-        });
-      }
       return JSON.stringify(out);
     })()"""
     items = fetch_json_js(js)
