@@ -405,6 +405,13 @@ class ComfyUIClient:
         :param preset: IPAdapterUnifiedLoader 的预设名，决定用哪套 IP-Adapter 模型
             （会自动从 models/ipadapter 与 models/clip_vision 里挑匹配的文件）。
             常用值 "PLUS (high strength)" / "PLUS FACE (portraits)"。
+
+        节点 12 的 weight_type 保持 "standard"（参考图全效）：参考图是「胸像定妆照」，
+        standard 才能把角色的年龄/性别/长相锁住。它同时会搬运参考图的构图与背景，
+        故调用方只在近/特写类景别挂参考图（见 image_agent._resolve_ref_image）——
+        中/全/远挂胸像参考图会被拽成灰底胸像、丢掉分镜场景。
+        曾试过 "prompt is more important"（构图听提示词），实测参考图随之失效，
+        56 岁老妇被画成年轻女子，故回退。
         """
         return {
             "3": {"class_type": "KSampler", "inputs": {

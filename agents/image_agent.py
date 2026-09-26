@@ -5,6 +5,7 @@
 """
 
 import logging
+import re
 from datetime import datetime
 
 from agents.base import Agent, AgentResult
@@ -13,50 +14,187 @@ from providers.base import ImageProvider
 # 影视级质感英文关键词（出图时统一注入，提升"一眼真实"感）
 from agents.research_agent import RENDER_ENGINE_EN, LIGHTING_EN
 
-# ── Skills 知识库：质量下限（无条件注入，专治"人不像人鬼不像鬼"）──
-# photoreal_block()：摄影师实拍质感；anatomy_block()：人体结构/一致性；
+# ── Skills 知识库：质量下限（只对"有画面角色"的镜头注入）──
+# photoreal_block()：摄影师实拍质感（仅写实风格）；anatomy_block()：人体结构/一致性；
 # anatomy_negative()：畸形脸/多余手指/插画感等要禁绝的词。
-# shot_topic_name()/category_block()：据分镜自动匹配题材词块（有角色→人物组；
-#   无人物→ scene/action/background 中文匹配，未命中再基于 sd_prompt 兜底匹配英文题材）。
+# shot_topic_name()/category_block()：据分镜自动匹配题材词块（单人/群体人像组；
+#   空镜与物件镜不再套题材原型配方，交给分镜自带的 sd_prompt）。
 from skills.resolver import (
     photoreal_block, anatomy_block,
     anatomy_negative, emotion_micro_block,
-    shot_topic_name, category_block,
+    shot_topic_name, category_block, visible_characters, is_closeup_shot,
 )
 
 logger = logging.getLogger(__name__)
 
-# 每镜 sd_prompt 固定追加的质感词（避免重复冗长，挑代表性组合）
-_QUALITY_TAIL = ", " + ", ".join(RENDER_ENGINE_EN[:2] + LIGHTING_EN[:2]) + ", masterpiece, best quality, highly detailed, photorealistic, 8k"
 
-# 负向词：基础 anatomy_negative 无条件追加到每个镜头的 sd_negative
+def _quality_tail() -> str:
+    """每镜 sd_prompt 固定追加的质感词（避免重复冗长，挑代表性组合）。
+
+    - 动漫风格不加 photorealistic —— 它会把 Anything/Ghibli 类底模往写实方向拽。
+    - 动漫风格也不用 unreal engine / 光追类词：它们是 3D 写实渲染词，而空镜（无画面
+      角色）不会叠加动漫词块，实测空镜因此被渲染成 3D 写实风，与全片平涂赛璐璐不统一。
+    """
+    from config.style_resolver import style_is_anime
+    if style_is_anime():
+        tail = ["anime screencap", "cel shading", "flat color",
+                "clean lineart"] + ["masterpiece", "best quality", "highly detailed"]
+    else:
+        tail = list(RENDER_ENGINE_EN[:2] + LIGHTING_EN[:2]) + [
+            "masterpiece", "best quality", "highly detailed", "photorealistic",
+        ]
+    tail.append("8k")
+    return ", " + ", ".join(tail)
+
+
+# 负向词：基础 anatomy_negative 追加到每个镜头的 sd_negative
+# （动漫风格下 filter_conflicting_negative 会把 illustration/anime/cartoon 等剔掉）
 _SKILLS_NEGATIVE = anatomy_negative()
 
 
 def _shot_skills(shot: dict) -> str:
     """为单镜叠加 Skills 词块。
 
-    - 题材词块（分层匹配，专注"无人物镜头"的清与准）：
-        1) 有角色 → 人物组（单人电影特写 / 群体合影）；
-        2) 无人物 → 先用 scene/action/background 中文匹配（自然/建筑/商品等）；
-        3) 仍未命中 → 兜底匹配英文 sd_prompt（shot_topic_name 已内置该策略）。
-    - 无条件：摄影师实拍质感 + 人体结构
+    - 无画面角色（空镜/物件镜，含只挂"旁白/声线"的镜头）→ 不注入任何词块：
+      实测无条件注入人像配方会把空镜渲染成人物大特写。
+    - 有画面角色 → 题材词块（单人特写/群体合影）+ 人体结构；写实风格再加实拍质感。
     - 人物近景/特写：再叠加微表情词（让角色"有戏"而不像摆拍）
     """
+    if not visible_characters(shot):
+        return ""
     parts = []
     topic_name = shot_topic_name(shot)
     topic_block = category_block("image/topic", topic_name) if topic_name else ""
     if topic_block:
         parts.append(topic_block)
-    parts.extend([photoreal_block(), anatomy_block()])
-    shot_type = shot.get("shot_type", "")
-    chars = shot.get("characters") or []
-    if chars and shot_type in ("近", "特写", "近景", "大特写"):
+    from config.style_resolver import style_is_anime
+    if not style_is_anime():
+        parts.append(photoreal_block())
+    parts.append(anatomy_block())
+    if is_closeup_shot(shot):
         hint = shot.get("emotion") or shot.get("action") or ""
         emo = emotion_micro_block(hint)
         if emo:
             parts.append(emo)
     return ", ".join([p for p in parts if p])
+
+
+def _lookup_asset(character_assets: dict, name: str) -> tuple[str, dict]:
+    """先精确匹配资产键，再按包含关系兜底（'小砚' ↔ '小砚（少年林砚）'）。
+
+    返回 (命中的资产键, 资产)；未命中返回 ("", {})。
+    """
+    if name in character_assets:
+        return name, (character_assets[name] or {})
+    for key, asset in character_assets.items():
+        if name and (name in key or key in name):
+            return key, (asset or {})
+    return "", {}
+
+
+def _asset_is_visual(name: str, asset: dict) -> bool:
+    """资产是否代表一个有视觉形象的角色。
+
+    兼容旧存档：缺少 is_visual 字段时，回退到「名称 + 外形描述」判断，
+    否则旁白/声线类角色会被当成参考图来源。
+    """
+    flag = asset.get("is_visual")
+    if flag is not None:
+        return bool(flag)
+    from agents.character_agent import is_visual_character
+    return is_visual_character({"name": name, "appearance": asset.get("appearance", "")})
+
+
+def _resolve_ref_image(shot: dict, character_assets: dict | None) -> str | None:
+    """为单镜挑角色参考图。
+
+    - 当前风格关掉参考图时直接不挂（见 config.yaml 各风格 ipadapter.enabled）：二次元
+      底模下 CLIP-vision 参考图会把人物年轻化或崩坏，纯文生图反而更稳；
+    - 只在近/特写类景别挂参考图：定妆照是胸像构图，中/全/远挂它会把构图与背景
+      一起搬过去（实测中景被拽成灰底胸像，场景与动作全丢）；
+    - 按 shot.characters 顺序取第一个「有视觉形象且匹配到资产」的角色：
+      旁白/声线类（is_visual=False）不参与，空镜/物件镜因此不会被糊上一张人脸；
+    - 角色名做宽松匹配，避免分镜里的 '小砚' 对不上资产键 '小砚（少年林砚）' 而丢参考图。
+    """
+    if not character_assets or not is_closeup_shot(shot):
+        return None
+    from config.style_resolver import ipadapter_for_style
+    if not ipadapter_for_style().get("enabled"):
+        return None
+    names = shot.get("characters") or []
+    if not isinstance(names, list):
+        return None
+    for name in names:
+        key, asset = _lookup_asset(character_assets, str(name))
+        if not asset or not _asset_is_visual(key, asset):
+            continue
+        ref = asset.get("controlnet_ref_path")
+        if ref:
+            return ref
+    return None
+
+
+# ── 年龄档词：对抗二次元底模的「年轻少女」先验 ──
+# Anything V5 + 新海诚 LoRA 会把人一律渲染成年轻少女：实测 56 岁阿梅、12 岁小砚
+# 都被画成少女，而 sd_prompt 里已有的 "56-year-old"/"12-year-old" 英文词不足以
+# 对抗该先验。故按角色外貌里的年龄/性别再补加权正向年龄词 + 反向年龄负向词。
+_CHILD_MAX_AGE = 14   # ≤ 该岁数算儿童
+_ELDER_MIN_AGE = 45   # ≥ 该岁数算中老年
+
+
+def _age_words(appearance: str, gender: str = "") -> tuple[list[str], list[str]]:
+    """从角色外貌/性别字段抽年龄段与性别，返回 (正向年龄词, 负向反向词)。
+
+    年龄只在外貌描述开头 10 字内找（appearance 惯例以「28岁，」「50出头，」起头），
+    避免把后文的数量词误当年龄；拿不到就返回空（不猜年龄）。
+    性别优先取 asset.gender 字段——外貌描述里常常不写「男/女」。
+    """
+    m = re.search(r"(\d{1,3})\s*(?:岁|出头|多)", (appearance or "")[:10])
+    if not m:
+        return [], []
+    age = int(m.group(1))
+    male = "男" in (gender or "") or "男" in (appearance or "")
+    if age <= _CHILD_MAX_AGE:
+        pos = ["(child:1.3)", "young kid", "(small body:1.2)"]
+        neg = ["woman", "girl", "female", "adult", "mature face"]
+        if male:
+            neg.append("long hair")
+        return pos, neg
+    if age >= _ELDER_MIN_AGE:
+        # 显式写出 elderly/old + woman/man 与皱纹松弛：只在提示词里写 "56-year-old"
+        # 敌不过 Anything V5 的少女先验，实测仍被画成年轻女子。
+        pos = ["(elderly man:1.4)", "(old man:1.35)"] if male else \
+              ["(elderly woman:1.4)", "(old woman:1.35)", "sagging skin"]
+        pos += ["(aged face:1.3)", "deep wrinkles", "gray hair", "weathered skin"]
+        neg = ["young girl", "child", "loli", "schoolgirl",
+               "smooth skin", "flawless skin"]
+        neg += ["woman", "girl", "female"] if male else ["man", "boy"]
+        return pos, neg
+    pos = ["(man:1.25)", "(masculine face:1.2)"] if male else ["(woman:1.25)"]
+    pos.append("(mature face:1.15)")
+    neg = ["child", "young girl", "loli", "schoolgirl"]
+    neg += ["woman", "girl", "female"] if male else ["man", "boy"]
+    return pos, neg
+
+
+def _age_cues(names: list, character_assets: dict | None) -> tuple[str, str]:
+    """汇总一镜内所有画面角色的年龄档词，返回 (正向串, 负向串)。
+
+    负向只在「本镜唯一画面角色」时给出：多角色同镜时各自的年龄反向词会互相打架
+    （如 12 岁男孩 + 56 岁母亲，禁 child 与禁 elderly 同时成立就自相矛盾）。
+    """
+    if not character_assets:
+        return "", ""
+    pos, negs = [], []
+    for name in names if isinstance(names, list) else []:
+        key, asset = _lookup_asset(character_assets, str(name))
+        if not asset or not _asset_is_visual(key, asset):
+            continue
+        p, n = _age_words(asset.get("appearance", ""), asset.get("gender", ""))
+        pos += p
+        negs.append(n)
+    neg = negs[0] if len(negs) == 1 else []
+    return ", ".join(dict.fromkeys(pos)), ", ".join(dict.fromkeys(neg))
 
 
 class ImageGenAgent(Agent):
@@ -89,13 +227,8 @@ class ImageGenAgent(Agent):
 
             shot_data = []
             for shot in shots:
-                # 取第一个角色名作为 ref_image 查询 key
-                char_list = shot.get("characters") or []
-                first_char = char_list[0] if isinstance(char_list, list) and char_list else None
-                ref_path = None
-                if character_assets and first_char:
-                    asset = character_assets.get(first_char, {})
-                    ref_path = asset.get("controlnet_ref_path")
+                # 角色参考图：只认有视觉形象的角色，且角色名宽松匹配
+                ref_path = _resolve_ref_image(shot, character_assets)
                 # 原始 sd_prompt + 风格合并关键词（多风格自由组合）+ LoRA 触发词 + Skills 质量块 + 影视级质感词
                 from config.style_resolver import (
                     style_keywords, lora_triggers_for_style, filter_conflicting_negative,
@@ -103,8 +236,11 @@ class ImageGenAgent(Agent):
                 _style_kw = style_keywords()
                 _lora_trig = lora_triggers_for_style()
                 _skills = _shot_skills(shot)
+                _age_pos, _age_neg = _age_cues(shot.get("characters") or [], character_assets)
                 _neg = (shot.get("sd_negative", "").strip() + ", " + _SKILLS_NEGATIVE).strip() \
                     if shot.get("sd_negative", "").strip() else _SKILLS_NEGATIVE
+                if _age_neg:
+                    _neg = f"{_neg}, {_age_neg}"
                 prompt = shot.get("sd_prompt", "")
                 if _style_kw:
                     prompt = f"{prompt}, {', '.join(_style_kw)}" if prompt else ", ".join(_style_kw)
@@ -112,9 +248,11 @@ class ImageGenAgent(Agent):
                     prompt = f"{prompt}, {', '.join(_lora_trig)}" if prompt else ", ".join(_lora_trig)
                 if _skills:
                     prompt = f"{prompt}, {_skills}" if prompt else _skills
+                if _age_pos:
+                    prompt = f"{prompt}, {_age_pos}" if prompt else _age_pos
                 shot_data.append({
                     "shot_id": str(shot["shot_id"]),
-                    "sd_prompt": (prompt + _QUALITY_TAIL).strip(),
+                    "sd_prompt": (prompt + _quality_tail()).strip(),
                     "sd_negative": filter_conflicting_negative(_neg),
                     "seed": shot.get("seed", -1),
                     "ref_image": ref_path,

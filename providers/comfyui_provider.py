@@ -41,6 +41,31 @@ LOCAL_IMAGE_DIR = Path(os.environ.get(
 ))
 
 
+def _negative_of(data: dict) -> str:
+    """读负向提示词，兼容 negative_prompt（通用键）与 sd_negative（image_agent 的键）。
+
+    历史 bug：image_agent 只写 sd_negative，而 provider 只读 negative_prompt，
+    于是风格负向词（写实/真人…）与 anatomy 负向词（畸形脸/多余手指…）
+    从未真正进入 ComfyUI，CLIPTextEncode 的 negative 一直是空串。
+    """
+    return (data.get("negative_prompt") or data.get("sd_negative") or "").strip()
+
+
+def _first_error(status: dict) -> str:
+    """从 ComfyUI history 的 status 里抽出第一条执行错误的可读描述。
+
+    status 形如 {"completed": False, "status_str": "error",
+                 "messages": [["execution_start", {...}],
+                              ["execution_error", {"node_type", "exception_message", ...}]]}
+    """
+    for m in (status.get("messages") or []):
+        if m and m[0] == "execution_error":
+            p = m[1] or {}
+            msg = str(p.get("exception_message") or "").strip().replace("\n", " ")
+            return f"{p.get('node_type')}: {msg}"
+    return status.get("status_str") or "error"
+
+
 def sync_image_to_local(img_info: dict) -> str:
     """把 ComfyUI 返回的图片记录同步落地成 AIGC 本地文件，返回本地绝对路径。
 
@@ -231,7 +256,7 @@ class ComfySDImageProvider(ImageProvider):
                 wf = self._build_ipadapter(
                     kind=ip_kind,
                     prompt=prompt,
-                    negative=kwargs.get("negative_prompt", ""),
+                    negative=_negative_of(kwargs),
                     ref_image=remote_ref,
                     width=kwargs.get("width", 512),
                     height=kwargs.get("height", 512),
@@ -246,7 +271,7 @@ class ComfySDImageProvider(ImageProvider):
             wf = ComfyUIClient.build_controlnet_workflow(
                 ckpt_name=self._ckpt,
                 prompt=prompt,
-                negative_prompt=kwargs.get("negative_prompt", ""),
+                negative_prompt=_negative_of(kwargs),
                 controlnet_name=ctrl_type,
                 controlnet_image=ctrl_image,
                 width=kwargs.get("width", 512),
@@ -259,7 +284,7 @@ class ComfySDImageProvider(ImageProvider):
         if wf is None:
             wf = self._build_txt2img(
                 prompt=prompt,
-                negative=kwargs.get("negative_prompt", ""),
+                negative=_negative_of(kwargs),
                 width=kwargs.get("width", 512),
                 height=kwargs.get("height", 512),
                 seed=seed or 42,
@@ -334,7 +359,7 @@ class ComfySDImageProvider(ImageProvider):
                     wf = self._build_ipadapter(
                         kind=ip_kind,
                         prompt=prompt,
-                        negative=shot.get("negative_prompt", ""),
+                        negative=_negative_of(shot),
                         ref_image=remote_ref,
                         width=int(shot.get("width", 768)),
                         height=int(shot.get("height", 768)),
@@ -350,7 +375,7 @@ class ComfySDImageProvider(ImageProvider):
                 wf = ComfyUIClient.build_controlnet_workflow(
                     ckpt_name=self._ckpt,
                     prompt=prompt,
-                    negative_prompt=shot.get("negative_prompt", ""),
+                    negative_prompt=_negative_of(shot),
                     controlnet_name=ctrl_type,
                     controlnet_image=remote_name,
                     width=int(shot.get("width", 768)),
@@ -363,7 +388,7 @@ class ComfySDImageProvider(ImageProvider):
             if wf is None:
                 wf = self._build_txt2img(
                     prompt=prompt,
-                    negative=shot.get("negative_prompt", ""),
+                    negative=_negative_of(shot),
                     width=int(shot.get("width", 768)),
                     height=int(shot.get("height", 768)),
                     seed=seed,
@@ -374,6 +399,8 @@ class ComfySDImageProvider(ImageProvider):
             submitted.append({
                 "prompt_id": resp["prompt_id"],
                 "shot_id": shot.get("shot_id", ""),
+                # 保留原始 shot：轮询阶段出错时可摘掉参考图改走文生图重投
+                "shot": shot,
             })
 
         if not submitted:
@@ -396,9 +423,48 @@ class ComfySDImageProvider(ImageProvider):
             except Exception:
                 continue
             for pid in list(pending_ids.keys()):
-                if pid in hist and hist[pid].get("status", {}).get("completed", False):
+                entry = hist.get(pid)
+                if not entry:
+                    continue
+                st = entry.get("status", {}) or {}
+                if st.get("completed", False):
                     s = pending_ids.pop(pid)
                     logger.info(f"[SD] 完成: shot={s['shot_id']}")
+                    continue
+                # status_str == "error" 的条目 completed 恒为 False，若不单独处理会
+                # 一直挂在 pending 里空转到 timeout（19 镜 ≈ 6.3h）。典型场景：
+                # IPAdapterFaceID 对二次元人脸抛 "InsightFace: No face detected."。
+                if st.get("status_str") != "error":
+                    continue
+                s = pending_ids.pop(pid)
+                err = _first_error(st)
+                shot = s.get("shot") or {}
+                if s.get("retried"):
+                    logger.error(f"[SD] 放弃: shot={s['shot_id']} 重投后仍失败 ({err})")
+                    continue
+                # 摘掉参考图（多半是人脸检测/IP-Adapter 工作流的问题），改走纯文生图重投一次
+                logger.warning(f"[SD] 失败重投: shot={s['shot_id']} {err} -> 去掉参考图改文生图")
+                shot["ipadapter_ref"] = None
+                shot["controlnet_type"] = None
+                shot["controlnet_image"] = None
+                shot["ref_image"] = None
+                steps, cfg = self._sampling(shot.get("steps"), shot.get("cfg"), sd_steps=16)
+                try:
+                    resp = await self.client.queue_prompt(self._build_txt2img(
+                        prompt=shot.get("sd_prompt", ""),
+                        negative=_negative_of(shot),
+                        width=int(shot.get("width", 768)),
+                        height=int(shot.get("height", 768)),
+                        seed=max(0, shot.get("seed", 0) or 0),
+                        steps=steps,
+                        cfg=cfg,
+                    ))
+                except Exception as e:
+                    logger.error(f"[SD] 放弃: shot={s['shot_id']} 重投失败 {e}")
+                    continue
+                s["retried"] = True
+                s["prompt_id"] = resp["prompt_id"]
+                pending_ids[resp["prompt_id"]] = s
 
         # 3. 收集结果
         flat = []

@@ -193,35 +193,28 @@ def category_block(dimension: str, name: str) -> str:
 
 
 # ── 自动题材判定（image_agent 用）──────────────
-# 无人物镜头的 scene/action/background 命中 → 注入对应题材词块；
-# 若中文字段都未命中，再兜底匹配英文 sd_prompt。中文=子串；英文=单词边界（防 selfish 命中 fish）。
-_TOPIC_KEYWORDS = [
-    ("自然与风景",
-     ["海", "山", "湖", "森林", "日落", "日出", "风景", "山脉", "天空", "雪", "星空",
-      "瀑布", "草原", "沙滩", "沙漠", "田野", "自然", "云"],
-     ["sea", "ocean", "mountain", "lake", "forest", "sunset", "sunrise", "landscape",
-      "sky", "snow", "starry", "waterfall", "grassland", "desert", "nature", "fog", "mist"]),
-    ("动植物",
-     ["动物", "猫", "狗", "鸟", "鹰", "鹿", "虎", "狮", "熊", "鱼", "昆虫", "蝴蝶",
-      "花", "植物", "树", "叶", "马", "牛", "羊", "蛇", "青蛙"],
-     ["animal", "cat", "dog", "bird", "eagle", "deer", "tiger", "lion", "bear", "fish",
-      "insect", "butterfly", "flower", "plant", "tree", "leaf", "horse", "cow", "sheep",
-      "snake", "frog"]),
-    ("建筑与城市",
-     ["建筑", "城市", "楼", "摩天", "街道", "桥", "房屋", "塔", "广场", "都市", "巷",
-      "店铺", "商场", "办公室"],
-     ["building", "architecture", "city", "skyscraper", "street", "bridge", "tower",
-      "urban", "plaza", "shop", "mall", "office"]),
-    ("商品与静物",
-     ["商品", "产品", "静物", "瓶", "杯", "手表", "鞋", "包", "珠宝", "香水", "咖啡",
-      "相机", "手机", "耳机"],
-     ["product", "still life", "bottle", "cup", "watch", "shoe", "bag", "jewelry",
-      "perfume", "coffee", "camera", "phone"]),
-    ("艺术与抽象",
-     ["抽象", "艺术", "插画", "几何", "概念", "海报", "纹理"],
-     ["abstract", "artistic", "illustration", "geometric", "conceptual", "poster",
-      "texture"]),
-]
+# 只有"真的会出现在画面上"的角色才触发人物题材配方。旁白/声线/画外音不是画面角色：
+# 实测它们会被当成"单人角色"，把空镜/落叶镜套上整段人像特写配方，渲染成人物特写。
+# 纯空镜/物件镜一律不注入题材原型配方——分镜自带的 sd_prompt 已完整描述场景，
+# 而原型配方（如"sharp animal eyes, macro flower"）会整段压过场景语义。
+_NON_VISUAL_NAME_HINTS = ("旁白", "声线", "配音", "解说", "画外音",
+                          "narrator", "voiceover", "voice-over")
+
+
+def visible_characters(shot: dict) -> list[str]:
+    """分镜里会出现在画面上的角色名（旁白/声线/画外音类剔除）。"""
+    chars = shot.get("characters") or []
+    if not isinstance(chars, list):
+        return []
+    out = []
+    for c in chars:
+        name = str(c or "").strip()
+        if not name:
+            continue
+        if any(h in name.lower() for h in _NON_VISUAL_NAME_HINTS):
+            continue
+        out.append(name)
+    return out
 
 
 def _hit_kw(text_lower: str, kw: str) -> bool:
@@ -231,39 +224,35 @@ def _hit_kw(text_lower: str, kw: str) -> bool:
     return kw in text_lower
 
 
-def _match_topic(text: str) -> str:
-    """按中英文关键词推断无人物镜头的题材分组名，未命中返回空串。"""
-    if not text:
-        return ""
-    text_lower = text.lower()
-    for name, zh_kws, en_kws in _TOPIC_KEYWORDS:
-        for kw in zh_kws + en_kws:
-            if _hit_kw(text_lower, kw):
-                return name
-    return ""
+# 只有这些景别才允许套「单人电影特写」配方；中/全/远等景别套特写配方会把
+# 中景硬拽成胸像大特写、丢掉分镜场景（实测 16/16 个含人物镜头全被拽爆）。
+_CLOSEUP_SHOT_TYPES = ("近", "特写", "近景", "大特写")
+
+
+def is_closeup_shot(shot: dict) -> bool:
+    """是否近距离人像景别（近/特写/大特写/近景）。
+
+    这类景别才适合套「单人电影特写」配方、也才适合挂胸像定妆照做角色锁定：
+    中/全/远挂胸像参考图会把它的构图与背景一起搬过来（实测中景被拽成灰底胸像）。
+    """
+    return str(shot.get("shot_type") or "").strip() in _CLOSEUP_SHOT_TYPES
 
 
 def shot_topic_name(shot: dict) -> str:
-    """据分镜内容推断题材分组名（人物优先，其次 scene/action/background，再兜底 sd_prompt）。
+    """据分镜内容 + 景别推断题材分组名（空镜返回空串=不注入题材词块）。
 
-    - 有角色：≥3 人 → 人物与肖像·群体合影；单人 → 人物与肖像·单人电影特写；
-      双人 → ""（既非"群体合影"也非"单人特写"，硬套任一词块都会把两三人对手戏
-      渲染成"一大群人在棚里合影"或"单人特写"，交给 sd_prompt 描述更准）
-    - 无角色：先用 scene/action/background 的中文匹配；未命中再兜底匹配英文 sd_prompt
-    - 未命中返回 ""（上层不注入题材词块）
+    - 近/特写/大特写 + 单人 → 人物与肖像·单人电影特写；≥3 人 → 人物与肖像·群体合影
+    - 中/全/远等景别 → ""（特写配方含 close-up head-and-shoulders framing 与
+      blurred neutral background，套在中景上会丢掉场景与动作，交给分镜自带的
+      sd_prompt 描述更准）
+    - 双人 / 无画面角色 → ""（既非单人特写也非群体合影，硬套任一配方都会跑偏）
     """
-    chars = shot.get("characters") or []
-    if chars:
-        if len(chars) == 1:
-            return "人物与肖像·单人电影特写"
-        if len(chars) >= 3:
-            return "人物与肖像·群体合影"
-        return ""
-    text = " ".join(str(shot.get(k) or "") for k in ("scene", "action", "background"))
-    name = _match_topic(text)
-    if name:
-        return name
-    return _match_topic(str(shot.get("sd_prompt") or ""))
+    chars = visible_characters(shot)
+    if len(chars) >= 3:
+        return "人物与肖像·群体合影"
+    if len(chars) == 1 and is_closeup_shot(shot):
+        return "人物与肖像·单人电影特写"
+    return ""
 
 
 def shot_topic_block(shot: dict) -> str:

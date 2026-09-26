@@ -23,8 +23,8 @@ comfyui:
     preset: PLUS (high strength)      # ipadapter: LIGHT - SD1.5 only (low strength) | STANDARD (medium strength) | VIT-G (medium strength) | PLUS (high strength) | PLUS FACE (portraits) | FULL FACE - SD1.5 only (portraits stronger)
     weight: 0.7                       # 参考图整体影响强度
     faceid_preset: FACEID PLUS V2     # ipadapter_faceid: FACEID | FACEID PLUS - SD1.5 only | FACEID PLUS V2 | FACEID PORTRAIT (style transfer) | FACEID PORTRAIT UNNORM - SDXL only (strong)
-    faceid_weight: 1.0                # FaceID 人脸强度
-    faceid_weight_faceidv2: 1.0       # FACEID PLUS V2 专用强度，仅 faceid_preset 为该档时生效
+    faceid_weight: 0.5                # FaceID 人脸强度（过高会把任何构图拉成人物特写）
+    faceid_weight_faceidv2: 0.5       # FACEID PLUS V2 专用强度，仅 faceid_preset 为该档时生效
     faceid_lora_strength: 0.6         # FaceID 配套 LoRA 强度，0 = 不加载
     provider: CPU                     # insightface 推理后端：CPU | CUDA | ROCM | DirectML | OpenVINO | CoreML
 tts:
@@ -248,7 +248,9 @@ styles:
     - v1-5-pruned-emaonly.safetensors
     loras:
     - name: shinkai_makoto_offset.safetensors
-      strength: 0.8
+      # 新海诚 LoRA 自带强「年轻少女」先验：0.8 时 56 岁阿梅/50 出头王婶都被画成
+      # 年轻女子，连 IP-Adapter 老妇参考图都拉不回来，故降到 0.6 保住光感即可。
+      strength: 0.6
       trigger: shinkai makoto
     keywords:
     - 日系动漫
@@ -258,6 +260,15 @@ styles:
     - 吉卜力
     - 新海诚
     neg_prompt: 写实, 真人, 3D照片, 低质量, 模糊, 变形, 水印
+    ipadapter:
+      # 本风格关闭角色参考图：二次元底模下 CLIP-vision 参考图两头不讨好——
+      # weight_type=prompt-is-more-important 时参考图压不住少女先验（56 岁阿梅被
+      # 画成年轻女子）；weight_type=standard 时参考图全效搬运（近景/特写崩成爪状
+      # 怪兽、抽象纹理）。纯文生图更稳：sd_prompt 已含英文发型/服装/年龄描述，
+      # 再叠加 _age_cues 的加权年龄档词，实测老妇人/少年/中年男子均稳定出对。
+      # （另：二次元人脸 InsightFace 常检不出，报 "No face detected." 直接中断出图）
+      enabled: false
+      kind: ipadapter
   3D卡通:
     llm_model: deepseek-v4-flash
     image_ckpt: v1-5-pruned-emaonly.safetensors

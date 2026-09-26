@@ -218,12 +218,17 @@
     return STYLES[primaryStyle()] || {};
   }
   // 图片路径解析：SD/LTX 生成的图在 ComfyUI 输出目录，映射为 /comfyui-output/
+  // 必须带上后端 origin —— 本页常跑在 Vite dev server(5173) 上，那里没有
+  // /comfyui-output、/storage/output 这些静态挂载，用站内相对路径会全部 404，
+  // 资产库与出图详情因此只能看到占位符（这是「人物图看不到」的根因）。
   function imgUrl(name) {
     if (!name) return '';
-    if (name.startsWith('http') || name.startsWith('/')) return name;
+    if (name.startsWith('http')) return name;
+    if (name.startsWith('/')) return API + name;
     // filename 可能是相对路径（如 storage/output/shot_1.png），补前缀即可访问
-    if (name.startsWith('storage/output/')) return '/' + name;
-    return '/comfyui-output/' + name.split('/').pop();
+    if (name.startsWith('storage/output/')) return API + '/' + name;
+    // 裸文件名（character_agent 的 portrait_path 只存文件名，无任何目录信息）
+    return API + '/comfyui-output/' + name.split('/').pop();
   }
 
   // ═══ 卡片状态机 ═══
@@ -1229,6 +1234,29 @@
           }).join('')
         : '<div class="asset-empty">暂无角色</div>';
     }
+
+    // 场景背景：用分镜出图填充（资产库左侧第二区）。
+    // 图落在 image_agent 的两层结构里（ep → shot → 图记录），按镜头号排序展示；
+    // 优先取 local_path（出图后复制到 AIGC 本地图库的副本），没有再用裸 filename。
+    if (els.assetScenes) {
+      const images = snap.image_agent?.images || {};
+      const scenes = [];
+      for (const ek in images) {
+        for (const sk in images[ek]) {
+          const rec = images[ek][sk] || {};
+          const file = rec.local_path || rec.filename || '';
+          if (file) scenes.push({ shot: sk, src: imgUrl(file) });
+        }
+      }
+      scenes.sort((a, b) => Number(a.shot) - Number(b.shot));
+      els.assetScenes.innerHTML = scenes.length
+        ? scenes.map((s) =>
+            `<div class="asset-item" data-open-img data-src="${esc(s.src)}" data-name="镜头 ${esc(s.shot)}" data-meta="分镜出图">` +
+            `<img src="${s.src}" onerror="this.remove()">` +
+            `<div class="name">镜头 ${esc(s.shot)}</div></div>`
+          ).join('')
+        : '<div class="asset-empty">暂无场景</div>';
+    }
   }
 
   // ═══ 资产放大预览 ═══
@@ -1903,13 +1931,17 @@
     });
 
     // 资产放大预览：网格点击 + 弹窗关闭
-    if (els.assetChars) {
-      els.assetChars.addEventListener('click', (e) => {
+    // 角色定妆照与场景背景（分镜图）两个网格都要绑，否则点场景图不会弹预览
+    const bindAssetPreview = (grid) => {
+      if (!grid) return;
+      grid.addEventListener('click', (e) => {
         const item = e.target.closest('[data-open-img]');
         if (!item) return;
         openImgModal(item.getAttribute('data-src'), item.getAttribute('data-name'), item.getAttribute('data-meta'));
       });
-    }
+    };
+    bindAssetPreview(els.assetChars);
+    bindAssetPreview(els.assetScenes);
     if (els.imgModalClose) els.imgModalClose.addEventListener('click', closeImgModal);
     if (els.imgModalOverlay) {
       els.imgModalOverlay.addEventListener('click', (e) => {

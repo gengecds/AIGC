@@ -374,7 +374,28 @@ def register_pipeline_routes(app):
                     pass
         return result
 
-    @app.get("/api/v1/pipeline/snapshot/{pipeline_id}")
+    @app.get("/api/v1/pipeline/wizard/latest")
+    async def get_latest_wizard():
+        """把最近一次落盘的 checkpoint 转成前端 5 步向导所需的 payload。
+
+        为什么需要它：管线跑完（或后端重启）后该 run 已从 /active 移除，而事件总线
+        是进程内存、重启即清空；用户此时刷新页面既找不到 run_id 也没历史可回放，
+        界面就是空白。此端点让前端直接按 step 回填最近一次的角色卡与分镜出图等。
+        同一 step 有多个 agent 时（如 step 2 的 character_agent / image_agent），
+        按 _WIZ_STEP_OF 的声明顺序后者覆盖前者——image_agent 的 payload 更全
+        （同时含 characters 与 images）。
+        """
+        out: dict = {}
+        for agent in _WIZ_STEP_OF:
+            try:
+                payload = _wiz_payload(agent)
+            except Exception as e:
+                logger.warning(f"[Wizard] 回填 {agent} 失败，已跳过: {e}")
+                continue
+            if payload:
+                out[str(_WIZ_STEP_OF[agent])] = payload
+        return out
+
     @app.get("/api/v1/pipeline/snapshot/{pipeline_id}")
     async def get_snapshot(pipeline_id: str):
         cp_dir = Path("storage/checkpoints")
@@ -615,8 +636,25 @@ def _first_media(data, depth: int = 0) -> str:
     return ""
 
 
+# 出图产物可能落在两处：AIGC 本地图库（出图后复制过来的副本）与 ComfyUI 输出目录。
+# _wiz_media_url 处理「裸文件名」时要探测它们，故集中定义（与 api/main.py 的挂载保持一致）。
+_LOCAL_IMAGES_DIR = Path(__file__).parent.parent.parent / "storage" / "output" / "images"
+_COMFY_OUTPUT_DIR = Path(os.environ.get(
+    "COMFY_OUTPUT_DIR",
+    "/Users/a715/git/ComfyUI/ComfyUI-Installs/ComfyUI/ComfyUI/output",
+))
+
+
 def _wiz_media_url(path: str) -> str:
-    """把磁盘路径转成浏览器可访问的 URL（对应 api/main.py 的静态挂载）。"""
+    """把磁盘路径转成浏览器可访问的 URL（对应 api/main.py 的静态挂载）。
+
+    入参有三种历史形态（各 agent 落盘习惯不一，都要认）：
+      ① 绝对路径（含 /ComfyUI/output/ 或 /storage/output/）—— 协议化即可；
+      ② 相对路径（storage/output/images/xxx.png）—— 补前导斜杠；
+      ③ 裸文件名（comfyui_output_00046_.png）—— character_agent 的 portrait_path
+         就只存文件名，没有任何目录信息。这种靠「AIGC 本地图库 → ComfyUI 输出目录」
+         逐个探测，落到哪个静态挂载下就用哪个 URL。
+    """
     if not path:
         return ""
     s = str(path).replace("\\", "/")
@@ -624,10 +662,18 @@ def _wiz_media_url(path: str) -> str:
     idx = s.find(marker)
     if idx >= 0:
         return "/comfyui-output/" + s[idx + len(marker):]
-    if "/storage/output/" in s:
-        return "/storage/output/" + s.split("/storage/output/", 1)[1]
+    if "storage/output/" in s:
+        return "/storage/output/" + s.split("storage/output/", 1)[1]
     if s.startswith(("http://", "https://")):
         return s
+    # 裸文件名兜底：图片出图后会被复制一份到 AIGC 本地图库，优先用副本
+    name = Path(s).name
+    if not name:
+        return ""
+    if (_LOCAL_IMAGES_DIR / name).is_file():
+        return f"/storage/output/images/{name}"
+    if (_COMFY_OUTPUT_DIR / name).is_file():
+        return f"/comfyui-output/{name}"
     return ""
 
 
@@ -730,6 +776,13 @@ def _wiz_payload(agent: str) -> dict:
             d.get("shots") or d.get("shot_list")
             or (d.get("storyboard") if isinstance(d.get("storyboard"), list) else [])
         )
+        if not raw_shots:
+            # 真实 checkpoint 是分集结构：{"episodes":[{"episode_number":1,"shots":[…]}]}，
+            # 只找顶层 shots 会一行都取不到（分镜步骤因此空白）
+            for ep in (d.get("episodes") or []):
+                if isinstance(ep, dict) and isinstance(ep.get("shots"), list) and ep["shots"]:
+                    raw_shots = ep["shots"]
+                    break
         shots = []
         for s in raw_shots or []:
             if not isinstance(s, dict):
@@ -748,29 +801,47 @@ def _wiz_payload(agent: str) -> dict:
         return {"characters": _char_rows(d)}
 
     if agent == "image_agent":
-        # 出图审核：优先带分镜图 URL；characters 沿用角色断点已确认的结果，
-        # 避免本步 payload 覆盖掉向导里已展示的角色卡（向导 demo 步骤 2 只认 characters）
+        # checkpoint 的 images 是两层嵌套：{"ep_1": {"3": {filename, local_path, qc…}, …}}，
+        # 这里要摊平成「一镜一行」——早前只遍历一层，会把整个 ep_1 当成一张图，
+        # 前端因此只拿到 1 行且 url 为空，等于看不到任何分镜图。
         imgs = d.get("images") or {}
-        rows = []
+        rows: list = []
+
+        def _add(shot_id, rec) -> None:
+            if isinstance(rec, dict):
+                # local_path（出图后复制到 AIGC 本地图库的副本）比裸 filename 更完整，优先取
+                p = _pick(rec, "local_path", "image_path", "path") or _first_media(rec)
+            else:
+                p = str(rec) if rec else ""
+            rows.append({
+                "shot_id": str(shot_id),
+                "url": _wiz_media_url(p),
+                "image_path": p,
+            })
+
         if isinstance(imgs, dict):
-            for shot_id, p in imgs.items():
-                url = _wiz_media_url(str(p) if isinstance(p, str) else _first_media(p))
-                rows.append({
-                    "shot_id": shot_id,
-                    "url": url,
-                    "image_path": str(p) if isinstance(p, str) else "",
-                })
+            for ep_key, ep_val in imgs.items():
+                if isinstance(ep_val, dict):
+                    for shot_id, rec in ep_val.items():
+                        _add(shot_id, rec)
+                else:
+                    _add(ep_key, ep_val)   # 兼容旧的「一镜一行」结构
         elif isinstance(imgs, list):
             for it in imgs:
-                if not isinstance(it, dict):
-                    continue
-                p = _pick(it, "image_path", "path", "url")
-                rows.append({"shot_id": _pick(it, "shot_id", default=""), "url": _wiz_media_url(p), "image_path": p})
+                if isinstance(it, dict):
+                    _add(_pick(it, "shot_id", default=""), it)
+        # 按镜头号排序，前端展示顺序才与剧情一致（字符串排序会把 10 排到 2 前面）
+        rows.sort(key=lambda r: int(r["shot_id"]) if r["shot_id"].isdigit() else 0)
         return {"characters": _char_rows(_cp_data("character_agent")), "images": rows}
 
     # —— 步骤 3：视频/字幕 ——
     if agent in ("video_agent", "subtitle_agent"):
         media = _first_media(d)
+        if not media:
+            # subtitle_agent 的 checkpoint 只存 .srt（不在 _first_media 认的媒体后缀里），
+            # 而它与 video_agent 同属第 3 步且声明在后，会把该步 video_url 覆盖成空；
+            # 这里回退去读 video_agent 的分镜视频，保证视频预览不为空。
+            media = _first_media(_cp_data("video_agent"))
         return {
             "video_url": _wiz_media_url(media),
             "duration_sec": _pick(d, "duration_sec", "duration", default="—"),
@@ -974,7 +1045,11 @@ async def _execute(pipeline_id: str, story_id: int, user_input: str, resume: boo
             ResearchAgent(llm_provider=mock_llm if llm_provider_name == "mock" else llm_provider_name),
             ScriptAgent(llm_provider=mock_llm if llm_provider_name == "mock" else llm_provider_name),
             StoryboardAgent(llm_provider=mock_llm if llm_provider_name == "mock" else llm_provider_name),
-            CharacterDesignAgent(use_comfyui=use_comfyui, comfy_client=comfy_client),
+            CharacterDesignAgent(
+                use_comfyui=use_comfyui, comfy_client=comfy_client,
+                # 中文外貌设定对 SD1.5 无效，定妆照需 LLM 转英文人像 prompt
+                llm_provider=mock_llm if llm_provider_name == "mock" else llm_provider_name,
+            ),
             ImageGenAgent(use_comfyui=use_comfyui, comfy_client=comfy_client),
             VideoGenAgent(use_comfyui=use_comfyui_video, comfy_client=comfy_client),
             SubtitleAgent(),

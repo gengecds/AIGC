@@ -197,20 +197,58 @@ def lora_triggers_for_style(name: str | None = None) -> list[str]:
     return out
 
 
-def filter_conflicting_negative(negative: str, name: str | None = None) -> str:
-    """剔除与当前风格 LoRA 触发词冲突的负向词（去重保序）。
+# 二次元风格标记：风格关键词 / LoRA 名 / 底模名里出现任一即视为"动漫向"。
+# 用于出图链路做风格自适应（动漫风格下不能注入 photorealistic，
+# 也不能把 anime/illustration 放进负向词，否则正负互相抵消）。
+_ANIME_MARKERS = ("动漫", "二次元", "漫画", "赛璐璐", "吉卜力", "新海诚",
+                  "anime", "manga", "cel shading", "ghibli", "shinkai")
+# 动漫风格下必须从负向词里剔除的词（它们正是动漫本身）
+_ANIME_CONFLICT_NEG = ("illustration", "painting", "anime", "cartoon",
+                       "coloring book", "sketch")
 
-    例：素描触发词含 sketch，而全局负向词块（anatomy_negative）也含 sketch，
-    一正一负互相抵消。规则：负向词条若作为子串出现在任一触发词中则移除。
+
+def style_is_anime(name: str | None = None) -> bool:
+    """当前/指定风格是否偏二次元（看关键词、LoRA 名、底模名）。"""
+    names = [name] if name else current_styles()
+    for n in names:
+        entry = get_style_entry(n) or {}
+        loras = entry.get("loras") or []
+        text = " ".join([
+            " ".join(str(k) for k in (entry.get("keywords") or [])),
+            " ".join(str(l.get("name", "")) if isinstance(l, dict) else str(l) for l in loras),
+            str(entry.get("image_ckpt") or ""),
+        ]).lower()
+        if any(m.lower() in text for m in _ANIME_MARKERS):
+            return True
+    return False
+
+
+def filter_conflicting_negative(negative: str, name: str | None = None) -> str:
+    """剔除与当前风格冲突的负向词（去重保序）。
+
+    两类冲突：
+    1. 负向词条作为子串出现在任一 LoRA 触发词里（素描触发词含 sketch，
+       而全局负向词块也含 sketch，一正一负互相抵消）；
+    2. 动漫风格下，负向词块里的 illustration/painting/anime/cartoon… 正是动漫本身，
+       会把 Anything/Ghibli 类底模往写实方向反向打击。
     只影响出图负向提示词，不参与剧本/分镜的 LLM 提示词。
     """
     neg = str(negative or "").strip()
-    triggers = lora_triggers_for_style(name)
-    if not neg or not triggers:
-        return neg
-    joined = ", ".join(t.lower() for t in triggers)
-    kept = [tok.strip() for tok in neg.split(",")
-            if tok.strip() and tok.strip().lower() not in joined]
+    if not neg:
+        return ""
+    joined = ", ".join(t.lower() for t in lora_triggers_for_style(name))
+    anime = style_is_anime(name)
+    kept = []
+    for tok in neg.split(","):
+        t = tok.strip()
+        if not t:
+            continue
+        low = t.lower()
+        if joined and low in joined:
+            continue
+        if anime and low in _ANIME_CONFLICT_NEG:
+            continue
+        kept.append(t)
     return ", ".join(kept)
 
 

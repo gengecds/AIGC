@@ -154,13 +154,15 @@
             class="char-card"
           >
             <div class="char-image-wrap">
-              <!-- 真实定妆照（后端转好的 URL）；无则回退到占位图 -->
+              <!-- 真实定妆照；旁白/声线类角色本就不出镜，直接说明而不是摆随机占位图 -->
               <img
-                :src="char.url || `https://picsum.photos/seed/${char.image_seed || 'char' + idx}/420/560`"
+                v-if="char.url"
+                :src="mediaUrl(char.url)"
                 :alt="char.suggested_name || `角色${idx + 1}`"
                 class="char-image"
                 loading="lazy"
               />
+              <div v-else class="char-image char-image-empty">该角色不出现在画面中</div>
             </div>
             <div class="char-footer">
               <label class="char-label">角色名</label>
@@ -177,7 +179,20 @@
           </div>
         </div>
         <div class="hint">
-          💡 2×2 共 4 张角色定妆照，每张下方选择对应的角色名（可覆盖建议名）。
+          💡 共 {{ characterList.length }} 张角色定妆照，每张下方选择对应的角色名（可覆盖建议名）。
+        </div>
+
+        <!-- 分镜出图（image_agent 断点带来）：逐镜展示，点图可看原图 -->
+        <div v-if="shotImages.length" class="shot-images-block">
+          <div class="shot-images-title">分镜出图 · {{ shotImages.length }} 张</div>
+          <div class="shot-images-grid">
+            <figure v-for="it in shotImages" :key="it.shot_id" class="shot-image-card">
+              <a :href="mediaUrl(it.url)" target="_blank" rel="noopener">
+                <img :src="mediaUrl(it.url)" :alt="`镜头 ${it.shot_id}`" loading="lazy" />
+              </a>
+              <figcaption>镜头 {{ it.shot_id }}</figcaption>
+            </figure>
+          </div>
         </div>
       </div>
 
@@ -192,7 +207,7 @@
             :poster="videoPoster"
             preload="metadata"
           >
-            <source :src="videoUrl" type="video/mp4" />
+            <source :src="mediaUrl(videoUrl)" type="video/mp4" />
             您的浏览器不支持 HTML5 video 标签。
           </video>
         </div>
@@ -319,6 +334,14 @@ const API_BASE = 'http://localhost:8888'
 function sseUrl(run_id: string): string {
   return `${API_BASE}/pipeline/events?run_id=${encodeURIComponent(run_id)}`
 }
+// 后端返回的图片/视频地址是站内相对路径（/storage/output/… 、/comfyui-output/…），
+// 但页面可能跑在 Vite dev server(5173) 上——那里没有这些静态挂载，直接用会全部 404。
+// 统一补上后端 origin；已是绝对地址（http/https）的原样返回。
+function mediaUrl(u?: string): string {
+  const s = (u || '').trim()
+  if (!s) return ''
+  return s.startsWith('/') ? `${API_BASE}${s}` : s
+}
 const runParam = new URLSearchParams(location.search).get('run_id') || ''
 const runId = ref<string>(runParam.trim() ? runParam.trim() : '')
 
@@ -387,15 +410,16 @@ interface CharacterItem {
   assigned_name: string
 }
 const characterList = reactive<CharacterItem[]>([])
-// 下拉框角色名选项（演示数据）
-const characterNameOptions: string[] = [
-  '林峰（舰长）',
-  '苏晴（副官）',
-  '外星指挥官',
-  'AI 机器人小七',
-  '神秘女子',
-  '舰长父亲（回忆）',
-]
+// 下拉框角色名选项：由后端返回的真实角色卡填充（勿写死演示名，否则界面会显示假角色）
+const characterNameOptions = reactive<string[]>([])
+
+// ── Step 2：分镜出图（image_agent 断点附带，一镜一行）──────────
+interface ShotImageItem {
+  shot_id: string
+  url: string
+  image_path?: string
+}
+const shotImages = reactive<ShotImageItem[]>([])
 
 // ── Step 3：视频预览 ──────────────────────────────────────────
 const videoUrl = ref<string>('')
@@ -512,7 +536,7 @@ function handleDownload() {
     return
   }
   const a = document.createElement('a')
-  a.href = videoUrl.value
+  a.href = mediaUrl(videoUrl.value)
   a.download = ''
   document.body.appendChild(a)
   a.click()
@@ -567,7 +591,7 @@ function handleProgressEvent(raw: any) {
     stepReady[1] = true
   }
 
-  // —— Step 2：角色图 ——
+  // —— Step 2：角色图 / 分镜出图 ——
   if (stepIdx === 2 && payload && Array.isArray(payload.characters)) {
     characterList.splice(0, characterList.length, ...payload.characters.map((c: any) => ({
       image_seed: c.image_seed || ('char_' + Math.random().toString(36).slice(2, 7)),
@@ -575,7 +599,23 @@ function handleProgressEvent(raw: any) {
       suggested_name: c.suggested_name || '',
       assigned_name: '',
     })))
+    // 下拉选项同步为真实角色名，避免出现写死的演示名
+    characterNameOptions.splice(0, characterNameOptions.length,
+      ...payload.characters
+        .map((c: any) => c.assigned_name || c.suggested_name || '')
+        .filter((n: string) => !!n))
     stepReady[2] = true
+  }
+  // 分镜出图：image_agent 断点附带的 images（一镜一行，带已转好的 url）
+  if (stepIdx === 2 && payload && Array.isArray(payload.images)) {
+    shotImages.splice(0, shotImages.length, ...payload.images
+      .filter((it: any) => it && it.url)
+      .map((it: any) => ({
+        shot_id: String(it.shot_id ?? ''),
+        url: it.url,
+        image_path: it.image_path || '',
+      })))
+    if (shotImages.length) stepReady[2] = true
   }
 
   // —— Step 3：视频预览 ——
@@ -721,6 +761,7 @@ function resetRunState() {
   scriptText.value = ''
   storyboardShots.splice(0, storyboardShots.length)
   characterList.splice(0, characterList.length)
+  shotImages.splice(0, shotImages.length)
   videoUrl.value = ''
 }
 
@@ -755,6 +796,36 @@ async function startRealRun() {
   }
 }
 
+async function loadLatestWizard(): Promise<boolean> {
+  // 回填最近一次落盘的创作结果：管线跑完后该 run 已从 /active 移除、事件总线也在
+  // 后端重启时清空，刷新页面会拿不到任何数据（角色定妆照与分镜出图因此看不到）。
+  // 后端 /wizard/latest 直接把各 step 的 payload 从 checkpoint 转好返回。
+  try {
+    const resp = await fetch(`${API_BASE}/api/v1/pipeline/wizard/latest`)
+    if (!resp.ok) return false
+    const j = await resp.json()
+    const steps = Object.keys(j || {})
+      .map(Number)
+      .filter(n => Number.isInteger(n) && n >= 0 && n <= 4)
+      .sort((a, b) => a - b)
+    if (!steps.length) return false
+    // 复用 SSE 的填充逻辑：构造同构事件逐个回填，再补一个 done 收尾
+    for (const idx of steps) {
+      handleProgressEvent({
+        type: 'progress',
+        step: idx,
+        payload: j[String(idx)],
+        message: '已回填最近一次创作结果',
+        percent: 100,
+      })
+    }
+    handleDoneEvent({ type: 'done', message: '已加载最近一次创作结果' })
+    return true
+  } catch {
+    return false
+  }
+}
+
 async function loadActive(silent = false) {
   // 从后端 /active 找回最近一条进行中/等待审核的管线并订阅（页面刷新后恢复审核）
   try {
@@ -765,7 +836,9 @@ async function loadActive(silent = false) {
       (a: any) => a.status === 'review' || a.status === 'running' || a.status === 'queued'
     )
     if (!entry) {
-      if (!silent) alert('当前没有进行中或等待审核的管线')
+      // 没有进行中的管线：回填最近一次结果，否则页面一片空白
+      const ok = await loadLatestWizard()
+      if (!ok && !silent) alert('当前没有进行中或等待审核的管线')
       return
     }
     runId.value = entry.pipeline_id
@@ -1173,6 +1246,58 @@ onBeforeUnmount(() => {
   height: 100%;
   object-fit: cover;
   display: block;
+}
+/* 无形象角色（旁白/声线）的占位：说明不出镜，而不是摆一张随机图 */
+.char-image-empty {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0 14px;
+  font-size: 12px;
+  color: var(--text-2, #999);
+  text-align: center;
+}
+
+/* 分镜出图：逐镜网格（比角色卡小，一屏尽量多显示几张） */
+.shot-images-block {
+  margin-top: 26px;
+  padding-top: 20px;
+  border-top: 1px solid var(--line);
+}
+.shot-images-title {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--text-1);
+  margin-bottom: 12px;
+}
+.shot-images-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(150px, 1fr));
+  gap: 12px;
+}
+.shot-image-card {
+  margin: 0;
+  background: var(--bg-2);
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  overflow: hidden;
+  transition: transform 0.2s, border-color 0.2s;
+}
+.shot-image-card:hover {
+  transform: translateY(-2px);
+  border-color: var(--gold);
+}
+.shot-image-card img {
+  width: 100%;
+  aspect-ratio: 1 / 1;
+  object-fit: cover;
+  display: block;
+}
+.shot-image-card figcaption {
+  padding: 6px 8px;
+  font-size: 12px;
+  color: var(--text-2, #999);
+  text-align: center;
 }
 .char-footer { padding: 12px 14px 16px; }
 .char-label {
