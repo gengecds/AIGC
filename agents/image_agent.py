@@ -35,10 +35,14 @@ def _quality_tail() -> str:
     - 动漫风格也不用 unreal engine / 光追类词：它们是 3D 写实渲染词，而空镜（无画面
       角色）不会叠加动漫词块，实测空镜因此被渲染成 3D 写实风，与全片平涂赛璐璐不统一。
     """
-    from config.style_resolver import style_is_anime
+    from config.style_resolver import style_is_anime, style_keywords
     if style_is_anime():
         tail = ["anime screencap", "cel shading", "flat color",
                 "clean lineart"] + ["masterpiece", "best quality", "highly detailed"]
+        # 叠加了电影感风格（如「电影级质感」）时去掉 flat color：平涂会把影调与
+        # 体积光压平，正是电影质感要的东西（靠关键词里的 cinematic 判定，不写死风格名）
+        if "cinematic" in " ".join(style_keywords()).lower():
+            tail = [t for t in tail if t != "flat color"]
     else:
         tail = list(RENDER_ENGINE_EN[:2] + LIGHTING_EN[:2]) + [
             "masterpiece", "best quality", "highly detailed", "photorealistic",

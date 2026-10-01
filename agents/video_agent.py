@@ -70,9 +70,11 @@ class VideoGenAgent(Agent):
                 shot_map[sid] = shot
 
         def _shot_length(sid: str) -> int:
-            # 时长(秒) × 25fps → LTX 帧数；限制在 3.5s~5.2s，避免单段过长生成太慢
+            # 时长(秒) × 25fps → 帧数；上限 129 帧（≈5.2s）避免单段过长生成太慢。
+            # 下限取 33 帧（≈1.4s @24fps，且满足 LTX 的 8n+1 帧数约束）——原下限 88 帧
+            # （3.5s）会把所有短镜头强行拉长，做不出快剪节奏（复刻短视频时 1.3s/镜被顶到 3.5s）。
             d = durations.get(str(sid), 5)
-            return max(88, min(129, int(d * 25)))
+            return max(33, min(129, int(d * 25)))
 
         def _shot_prompt(shot: dict | None) -> str:
             """按分镜内容自动拼装视频提示词：场景描述 + 运镜/题材/用途词块。

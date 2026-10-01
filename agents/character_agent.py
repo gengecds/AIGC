@@ -16,9 +16,10 @@ logger = logging.getLogger(__name__)
 
 # 只出声不露脸的角色（旁白、纯人声/AI声线等）：不该生成定妆照，
 # 更不该把定妆照当参考图喂给下游出图（否则空镜/物件镜会被强行糊上一张人脸）。
-_NON_VISUAL_NAME_HINTS = ("旁白", "声线", "配音", "narrator", "voiceover")
+_NON_VISUAL_NAME_HINTS = ("旁白", "声线", "配音", "画外", "吟诵", "独白", "朗诵",
+                          "narrator", "voiceover")
 _NON_VISUAL_APPEARANCE_HINTS = (
-    "不出现在画面", "不需要出现", "仅作为人声", "仅作为字幕", "画外音", "只出声",
+    "不出现在画面", "不需要出现", "仅作为人声", "仅作为字幕", "画外音", "只出声", "不出镜",
 )
 
 # 中文外貌设定对 SD1.5 的 CLIP 几乎等于噪声：实测「56岁…鬓边碎发」被渲染成年轻少女、
@@ -28,6 +29,8 @@ _PORTRAIT_SYS = (
     "你是 SD1.5 出图提示词工程师。把中文角色设定改写为一段英文人像 prompt。"
     "必须写清：年龄（数字+年龄词）、性别、脸型、发型发色、肤色、服装、该年龄的外貌特征"
     "（如 wrinkles / gray hair / round face / child-like proportions）。"
+    "发色与发型是角色的识别特征，会被底模的默认审美覆盖（如 pink hair twin buns 被画成"
+    "棕色长发），必须用括号加权强调，写成 (pink hair:1.4), (twin buns hairstyle:1.35) 这种形式。"
     "只输出一行英文 prompt，逗号分隔，禁止任何解释、禁止中文。"
 )
 _AGE_EN = {"少年": "young teenager", "青年": "young adult", "中年": "middle-aged", "老年": "elderly"}

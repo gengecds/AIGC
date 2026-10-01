@@ -433,6 +433,11 @@ styles:
     - 电影调色
     - 青橙
     - 大片质感
+    # 英文等价词：SD1.5 的 CLIP 读不懂中文，中文关键词对出图近似噪声，
+    # 必须同时登记英文，与「日系动漫」等 SD1.5 风格叠加时才真的生效。
+    - cinematic still, shallow depth of field, cinematic color grading
+    - teal and orange color grade, film grain, anamorphic lens flare
+    - dramatic rim lighting, volumetric haze, high dynamic range
     neg_prompt: 扁平业余光, 褪色, 廉价, 低质量, 模糊, 变形, 水印
 storage:
   checkpoint_dir: storage/checkpoints/

@@ -141,6 +141,24 @@ def ipadapter_for_style(name: str | None = None) -> dict:
     return out
 
 
+def _engine_of_style(name: str | None) -> str | None:
+    """风格的出图引擎（sd15 / flux）；未配置返回 None。"""
+    entry = get_style_entry(name) or {}
+    return entry.get("image_model_type")
+
+
+def _lora_fits_engine(lora_name: str, engine: str | None) -> bool:
+    """LoRA 基座是否与出图引擎匹配。
+
+    SD1.5 与 FLUX 的 LoRA 互不兼容，混挂会让出图工作流加载失败——多风格叠加时
+    很容易踩到（如「日系动漫」= Anything V5/SD1.5 +「电影级质感」= FLUX）。
+    按 LoRA 名里是否含 flux 判定基座；引擎未知时不过滤，交由底层报错。
+    """
+    if not engine:
+        return True
+    return ("flux" in lora_name.lower()) == (str(engine).lower() == "flux")
+
+
 def loras_for_style(name: str | None = None) -> list[dict]:
     """当前/指定风格要注入出图工作流的 LoRA 列表。
 
@@ -148,8 +166,10 @@ def loras_for_style(name: str | None = None) -> list[dict]:
     name 给定→只取该风格；name 为空→合并当前所有激活风格（按名去重保序）。
     风格未配置 loras 时返回空列表（工作流不挂 LoRA）。
 
-    注意：LoRA 基座必须与底模匹配（SD1.5 只能配 SD1.5 的 LoRA），
-    config 里只登记已验证基座匹配的条目。
+    多风格叠加时，只保留与「主风格引擎」匹配的 LoRA：底模由主风格决定
+    （日系动漫 Anything V5 / SD1.5），异引擎风格的 LoRA 挂上去只会让工作流加载失败。
+    非主风格的关键词仍会照常合并进提示词，所以「日系动漫 + 电影级质感」=
+    动漫底模 + 电影级关键词（宽画幅/浅景深/青橙调色），不加载 FLUX LoRA。
     """
     def _normalize(entry: dict | None) -> list[dict]:
         raw = entry.get("loras") if isinstance(entry, dict) else None
@@ -173,13 +193,15 @@ def loras_for_style(name: str | None = None) -> list[dict]:
     if name is not None:
         return _normalize(get_style_entry(name))
 
+    engine = _engine_of_style(_active_styles[0] if _active_styles else None) or "sd15"
     merged: list[dict] = []
     seen: set[str] = set()
     for n in _active_styles:
         for lora in _normalize(get_style_entry(n)):
-            if lora["name"] not in seen:
-                seen.add(lora["name"])
-                merged.append(lora)
+            if lora["name"] in seen or not _lora_fits_engine(lora["name"], engine):
+                continue
+            seen.add(lora["name"])
+            merged.append(lora)
     return merged
 
 

@@ -197,7 +197,7 @@ def category_block(dimension: str, name: str) -> str:
 # 实测它们会被当成"单人角色"，把空镜/落叶镜套上整段人像特写配方，渲染成人物特写。
 # 纯空镜/物件镜一律不注入题材原型配方——分镜自带的 sd_prompt 已完整描述场景，
 # 而原型配方（如"sharp animal eyes, macro flower"）会整段压过场景语义。
-_NON_VISUAL_NAME_HINTS = ("旁白", "声线", "配音", "解说", "画外音",
+_NON_VISUAL_NAME_HINTS = ("旁白", "声线", "配音", "解说", "画外", "吟诵", "独白", "朗诵",
                           "narrator", "voiceover", "voice-over")
 
 
